@@ -2,41 +2,56 @@
 
 Design review. **No code changes proposed in this document are implemented.**
 
-Reviewed tree: `DRLXAI/hermes-orchestrator`, branch `feat/control-plane`,
-commit `877fb63` ("fix: harden stage 1 verifier lifecycle"), 77 files, ~21k lines.
+> **REVISED 2026-09-18 after the reconciliation review.** Read
+> [`RECONCILIATION.md`](RECONCILIATION.md) first — it corrects three claims in this document
+> and adds four defects (B-1…B-4) that are prerequisites for everything below. Sections
+> corrected in place are marked **[REVISED]**. This is not an appendix: where this document
+> was wrong, the wrong text has been replaced.
+
+Reviewed trees: `DRLXAI/hermes-orchestrator` branch `feat/control-plane` @ `877fb63`
+(77 files, ~21k lines) **and** branch `main` @ `615ee9f` (+14,251 lines, a second, divergent
+orchestration stack). A third implementation exists only on David's Mac and is unreadable.
 
 ---
 
-## 0. A correction to the brief before anything else
+## 0. [REVISED] What the brief described, and where it actually lives
 
-The brief describes `scripts/durable-workflow.sh`, `scripts/lib/durable_workflow.py`,
-`tests/test_durable_workflow.py` and `state/durable-workflows.db`, and a "V1 change"
-that added `heartbeat_at` and `runner_pid`.
+My original §0 asserted that `scripts/durable-workflow.sh`, `scripts/lib/durable_workflow.py`,
+`tests/test_durable_workflow.py` and `state/durable-workflows.db` "do not exist."
 
-**None of those files exist.** The real tree is:
+**That was wrong.** They exist, on David's Mac, on branch
+`integrate/control-plane-dispatcher` @ `f2d64d9`, which was never pushed. What I verified was
+only that they are absent from GitHub:
 
-| Brief | Actual |
-| --- | --- |
-| `scripts/durable-workflow.sh` | `scripts/control-plane.sh`, `scripts/dispatcher.sh` |
-| `scripts/lib/durable_workflow.py` | `taskstore.py`, `dispatch_policy.py`, `routing.py`, `escalation.py`, `quota.py`, `worktree_lease.py`, `dispatcher.py` |
-| `state/durable-workflows.db` | `state/control-plane.db` + `state/dispatcher.db` |
-| `heartbeat_at` added | **`heartbeat` appears zero times in the repository** |
-| `runner_pid` added | correct — `dispatch_runs.runner_pid` exists |
+```
+git ls-remote --heads origin  →  only feat/control-plane @ 877fb63, main @ 615ee9f
+git fetch origin f2d64d9      →  fatal: couldn't find remote ref f2d64d9
+```
 
-This matters beyond pedantry. The brief's mental model is "we have a durable workflow
-engine that advances steps; it needs a queue bolted on." The actual system is something
-different and, in one respect, better: **a rigorously adversarial authorization layer
-with no scheduler at all.** The right V2 is therefore not "add queue management to a
-workflow engine." It is "supply the missing organ — drive — without touching the organ
-that already works."
+I still cannot read that code, and this document makes no claim about its internals. The
+eleven questions in `RECONCILIATION.md` §16 settle every decision that depends on it.
 
-I also could not inspect `~/projects/hermes-orchestrator` on the Mac. This review is of
-the pushed `feat/control-plane` branch, which is one commit ahead of the review handoff
-in `REVIEW-8-BLOCK.md` and contains the fixes for F1–F5.
-
----
+**A third system exists that the brief did not mention and my first review missed.** `main` @
+`615ee9f` is not an ancestor of `feat/control-plane`; both descend from `b8dfd98` and have
+never been merged. `main` ships its own `model_router.py`, `policy_gate.py`, `verifier.py`,
+`project_registry.py`, `skill_registry.py`, a local-qwen worker and a YAML task format — so
+**two routers and two permission systems were already on GitHub** before durable-workflow
+entered the picture. See `RECONCILIATION.md` §6.
 
 ## 1. Current architecture assessment
+
+### [REVISED] There are three systems, not one
+
+My first review assessed only `feat/control-plane`. `main` @ `615ee9f` is a divergent sibling
+(merge base `b8dfd98`, never merged) carrying its own `model_router.py`, `policy_gate.py`,
+`verifier.py`, `project_registry.py`, `skill_registry.py`, a local-qwen worker and a YAML task
+format. A third implementation (`f2d64d9`, durable-workflow) exists only on the Mac.
+
+Their disposition is decided in `RECONCILIATION.md` §8. In brief: **`feat/control-plane`'s
+authority surface is authoritative for all fourteen responsibilities**; `main` donates four
+mechanisms (`TASK_TYPES`, `DETERMINISTIC_TASK_TYPES`, path confinement, the structured verdict
+shape) and is then retired as orchestration; durable-workflow donates its loop policy and is
+then retired. The assessment below therefore describes the surviving system.
 
 ### What is actually there
 
@@ -162,14 +177,37 @@ rest.
 | Cost discipline | **Solved, strongly** | no-cheaper-worker check + one-rung escalation + quota-denies-by-default |
 | Worker cannot self-certify | **Solved** | evidence stamped from assignment; independent reviewer required for high risk |
 | One writer per worktree | **Solved as of `f175b00`** | lease acquired inside the assignment transaction, dev/ino keyed, stale-break requires dead holder **and** age |
-| Dead-worker detection | **Solved** | `runner_identity_state`; indeterminate never acts |
+| Dead-worker detection | **Solved, for one worker** | `runner_identity_state`; indeterminate never acts — but only reached for `qwen-coder-local` (B-2) |
 | Crash-before-launch recovery | **Solved** | compare-and-swap orphan record; real launch always beats orphan cleanup |
-| Reboot reconciliation *mechanism* | **Solved** | `recover()` reconciles journal↔ledger both directions |
+| Reboot reconciliation *mechanism* | **[REVISED] BROKEN** | `recover()` is blind to `failed` (B-1) and scoped to one worker id (B-2). See below. |
 | Verification is a separate authority | **Solved** | digest-pinned shell-free verifier argv; nonzero verifier exit fails a zero-exit model |
 | Credentials out of the worker env | **Solved for the one adapter** | allowlisted environment, no provider credentials |
 
-That is a genuinely strong foundation. Seven of the brief's twenty-four asks are
-already done to a higher standard than the brief specifies.
+**[REVISED] Three corrections to this table**, from the reconciliation review. All three
+made the system look healthier than it is, and all three are in `dispatcher.py`, which is
+**not** frozen — the seven frozen digests verify OK on disk.
+
+- **B-1. `recover()` can never reconcile a `failed` run.** `dispatcher.py:1884` and `:1666`
+  both filter `{"succeeded", "cancelled"}`. `_reconcile_journal_terminal` accepts `"failed"`
+  (`:1588`) and handles it correctly — **nothing can call it with one**. A crash between the
+  journal commit (`dispatcher.db`) and the ledger reconcile (`control-plane.db`) leaves the
+  task permanently `assigned` with its worktree lease held, and `dispatcher.sh recover`
+  returns `recovered 0` forever. This traverses the *most common* terminal path: every
+  nonzero worker exit.
+- **B-2. `recover()` pass 2 is scoped to one worker.** `if task.assigned_worker !=
+  LOCAL_WORKER: continue` (`:1890`, `LOCAL_WORKER = "qwen-coder-local"` at `:37`). But
+  `dispatch_policy.assign` accepts any worker and already has two production callers. Any
+  assignment to `qwen3-local` — free, local, enabled, the natural pick for `analysis` work —
+  is outside every recovery sweep in the system.
+- **B-3. Nothing automated promotes `pending → ready`.** `add_task` hardcodes `'pending'`
+  (taskstore.py:937). `TaskStore.evaluate()` is the sole promoter and has exactly one
+  production caller: `control-plane.py:138`, a verb a human types. `grep -c evaluate
+  scripts/lib/dispatcher.py` returns **0**.
+
+So the durability foundation is strong *in the ledger* and defective *in the dispatcher*.
+The frozen half earned its reputation; the unfrozen half has not been through the same gate.
+Six of the brief's twenty-four asks are done to a higher standard than the brief specifies;
+the seventh — recovery — is not done at all outside one worker and one state.
 
 ---
 
@@ -180,9 +218,12 @@ Ordered by how directly each causes the idle Mac.
 ### F-1 — No selector. *(root cause of the brief)*
 Nothing converts "there are 5 ready tasks" into "start one." **Directly causes CASE 1.**
 
-### F-2 — No trigger
-`recover()` is correct and is only ever run when a human types `dispatcher.sh recover`.
-The reboot mechanism exists; the thing that fires it does not. **CASE 4.**
+### F-2 — [REVISED] Recovery is untriggered **and** defective
+I previously wrote that `recover()` "is correct and is only ever run when a human types
+`dispatcher.sh recover`." The second half stands; the first does not. `recover()` is blind to
+`failed` (B-1) and scoped to `qwen-coder-local` (B-2). **Supplying a trigger for a defective
+reaper makes the wedge arrive faster, not less often.** Fixing both is a prerequisite for the
+loop, not a follow-up to it. **CASE 4.**
 
 ### F-3 — No activity model
 `heartbeat` appears zero times. In `recover()`, an active run whose runner identity is
@@ -232,6 +273,24 @@ while believing it is fixed.** Called out again in §7 and §24.
 0600) and it persists for the run's lifetime and beyond. There are no secrets today
 because the only adapter is loopback Ollama. A Codex or Claude adapter that needs an API
 key will put it there by the path of least resistance. **Pre-emptive finding.**
+
+### F-14 — [NEW] The health predicate is weaker than the execution predicate
+`control-plane.py:127` computes `findings = failed + blocked + awaiting_approval`. `ready` is
+not a term and `assigned` is not a term, so a task wedged by B-1 and a `ready` queue that is
+100% undispatchable **both exit HEALTHY**. Meanwhile `plan` escalates only on
+`routing.recommend()`'s `needs_human`, and `recommend()` consults neither quota, nor
+`metered`, nor which adapters are wired — so it certifies routes that cannot execute.
+
+> Health is computed by `routing.recommend()`. Execution is gated by
+> `dispatch_policy.evaluate_authorization()`'s twelve checks. **Nothing compares the two.**
+
+This is the structural reason the Mac goes idle *silently* rather than *noisily*, and it is
+more important than any single bug above. The fix is the doctor (§7.4).
+
+### F-15 — [NEW] Two routers and two permission systems already exist on GitHub
+`main` @ `615ee9f` ships `model_router.py` and `policy_gate.py`. Neither is reachable from
+`feat/control-plane`, and neither shares a state model with it. Retiring them is part of V2,
+not a separate cleanup. See `RECONCILIATION.md` §6 and §8.
 
 ### F-13 — `store.evaluate()` is O(tasks × dependencies) with a query per dependency
 Irrelevant at 100 tasks, a real tick cost at 10,000. Mentioned only so it is a known
@@ -661,8 +720,17 @@ def tick() -> int:
                 resolve_stall(run, sample)      # §13
 
         # ---- 3. recompute eligibility -----------------------------------
-        store.evaluate()                        # public frozen API
+        # [REVISED] The tick MUST call this itself. It is the sole pending->ready
+        # promoter and its only production caller is control-plane.py:138, a verb a
+        # human types (B-3). A tick built on dispatcher.sh verbs alone sees an empty
+        # ready set FOREVER. control-plane.py is frozen, so this cannot live there.
+        store.evaluate()                        # public frozen API, called from unfrozen code
         holds = refresh_holds(store)            # derived, explanatory only
+
+        # ---- 3b. THE DOCTOR [NEW] ---------------------------------------
+        # Ask the EXECUTION question, not the routing question, for every ready
+        # task -- once per candidate worker, not just the router's pick.
+        undispatchable = doctor.scan(store, workers)   # see 7.4
 
         # ---- 4. what can physically start right now? --------------------
         capacity = resources.capacity()         # slots, ollama, build, browser,
@@ -686,7 +754,9 @@ def tick() -> int:
                 continue                        # ◀◀ CASE 5. THE critical line.
 
         # ---- 6. explain ourselves ---------------------------------------
-        reason = "" if (dispatched or running) else classify_idle(store, denials, capacity)
+        # [REVISED] undispatchable feeds classify_idle: a task the loop never
+        # ATTEMPTED produces no denial, so denials alone cannot see it.
+        reason = "" if (dispatched or running) else classify_idle(store, denials, undispatchable, capacity)
         close_tick(tick_row, dispatched, running, reason)
 
         # ---- 7. generate more work if the queue is genuinely dry ---------
@@ -748,6 +818,42 @@ Evaluated in order; the first match wins:
 
 `IDLE_ERROR` is the state the brief describes. It is now a first-class, named,
 notified, tested condition rather than an absence of activity.
+
+### 7.4 [NEW] The doctor — the piece that actually makes the invariant true
+
+Classifying idle from *recorded denials* is strictly weaker than it looks: it can only see
+tasks the loop attempted. A task that is never attempted produces no denial and therefore no
+evidence of its own undispatchability.
+
+```python
+def scan(store, workers):
+    # Pure. Mints nothing, consumes nothing, writes nothing.
+    out = []
+    for task in store.tasks(status="ready"):
+        verdicts = [
+            dispatch_policy.evaluate_authorization(
+                task, workers, store=store, quota=QuotaLedger(store),
+                leases=dispatch_policy.lease_directory_for(store),
+                history=store.attempt_history(task.id),
+                available=wired_adapters(),        # what can ACTUALLY execute
+            )
+            for candidate in candidate_workers(task, workers)  # EVERY candidate, not the pick
+        ]
+        if all(not v.allowed for v in verdicts):
+            out.append((task, [v.summary for v in verdicts]))  # verbatim failing check names
+    return out
+```
+
+**A non-empty result is a FINDING**: non-zero exit, a notification, and the failing check
+reported verbatim (`quota: codex/* quota status is EXHAUSTED`), never paraphrased.
+
+This one check catches every sibling of the brief's complaint at once: the escalation
+dead-zone where `escalation_floor` outruns the dispatcher's `available` narrowing; unbound
+worktrees; projects absent from `dispatcher-targets.json`; the derived-approval mismatch
+between `evaluate()` and `_ledger_objection`; and stale-`ready`-with-a-cancelled-dependency.
+
+It must live in a **new unfrozen module** (`scripts/lib/doctor.py` + `scripts/doctor.sh`).
+It cannot be a `control-plane.py` subcommand — that file is frozen at digest `f73fb7a4…`.
 
 ---
 
@@ -1019,6 +1125,29 @@ verification failure**, not a warning. Without this, `owns_paths` is decoration.
 
 A heartbeat thread keeps beating while the model loops on the same thought. A heartbeat
 alone proves the process has a scheduler slot. That is all it proves.
+
+### [REVISED] Two rules the reconciliation added
+
+**A heartbeat written on a timer by the supervising process detects nothing.** It is
+definitionally redundant with `runner_identity_state() == "matched"`: it stops when the process
+stops (already detected) and keeps beating through a total model hang (the only case worth
+detecting). **A heartbeat is a new fact only if it is gated on observed worker progress.**
+
+**Heartbeat staleness must never act alone.** The joint gate:
+
+```
+stale + gone          →  crashed           — existing finalize path handles it
+stale + reused        →  crashed           — existing path; pid reuse correctly rejected
+stale + indeterminate →  do nothing        — existing discipline; preserve it
+stale + matched       →  THE ONLY NEW CASE — a live process making no progress
+```
+
+And: **in-run enforcement belongs in `dispatch_runner.py`, not in the 60 s tick.** Sampling
+from outside on a 60 s cadence cannot bound a runaway between samples. `verifier_runner.py`
+already implements the correct bounded-poll supervisor (deadline + cancellation check + SIGTERM
+→ wait 5 → SIGKILL) and it can be lifted verbatim into `dispatch_runner.py`'s bare
+`child.wait()`. Two layers, one owner: in-run enforcement in the runner, cross-run adjudication
+in `recover()`.
 
 ### Worker side — `dispatch_runner.py` (not frozen)
 
@@ -1526,66 +1655,32 @@ admitted cleanly.
 
 ---
 
-## 20. Migration path from V1
+## 20. [REVISED] Migration path
 
-Seven milestones. Each ships independently, each is reversible, and **M0–M3 touch zero
-frozen files.**
+**Superseded by `RECONCILIATION.md` §15**, which sequences three implementations rather than
+one. The milestone list below stands, with one structural change: **R0–R2 are prerequisites,
+not preliminaries.** All five invariant attacks pass through them, and shipping a scheduler
+before they land ships a machine that wedges silently and faster.
 
-### M0 — Observability only *(no behaviour change)*
-Operations-DB tables; heartbeat emission in `dispatch_runner.py`; `liveness.sample()`;
-`hermesctl status --json`; `status.json`. Nothing dispatches. Run alongside manual
-operation for a week and confirm the activity model agrees with reality.
-**Frozen files touched: none.** Risk: near zero.
+```
+R0  FIX B-1        3-line filter fix + per-iteration try/except + regression test  [unfrozen]
+R1  FIX B-2        de-scope recover() pass 2 from LOCAL_WORKER                     [unfrozen]
+R2  THE DOCTOR     dispatchability scanned with the SAME predicate that gates      [new module]
+                   execution; non-empty undispatchable set = FINDING + notify
+--- everything below is the original M0..M6, renumbered ---
+R3  = M0 + M1      observability, then the tick with dispatch_enabled=false
+R4  = M2           enable dispatch, one lane, qwen-coder-local, pilot worktrees
+R5  = M3 + liveness  heartbeat-on-progress, in-run bounded poll, stall reaper, ownership
+R6  DONATE MAIN    task-classes.json, DETERMINISTIC_TASK_TYPES, structured verdict,
+                   project_registry  →  then DELETE main's orchestration stack
+R7  ABSORB f2d64d9 answer RECONCILIATION.md §16  →  donate loop policy  →  delete branch (3)
+R8  COLLAPSE DB    dispatcher.db → control-plane.db schema v9   [FROZEN EDIT — own review]
+R9  = M4 + M5 + M6 adapters, planner, verification profiles
+```
 
-### M1 — The loop, with the keys removed
-`controller.py`, machine lock, `controller_ticks`, idle classification, both
-LaunchAgents — with **`dispatch_enabled = false`**. Every tick logs *what it would have
-dispatched and why*. Compare against what David actually does.
-
-> This is the step that earns trust. The selector is the component most likely to be
-> subtly wrong, and it is the one component that can be fully validated before it is
-> allowed to act.
-
-**Frozen files touched: none.**
-
-### M2 — Autonomous local lane
-`dispatch_enabled = true`, `slot = 1`, `qwen-coder-local` only, pilot worktrees only
-(the existing `pilot_root` constraint). Stall detection live. Boot backoff live.
-**CASES 1, 3, 4, 8 close here, for the local lane.**
-**Frozen files touched: none.**
-
-### M3 — Ownership and bounded concurrency
-Path claims, resource classes, RAM/disk/load gates, `slot = 2`. **CASES 6, 7 close.**
-**Frozen files touched: none.**
-
-### M4 — Adapters *(the first step with real new risk)*
-Claude Opus 4.6, Sol, Codex, CoS adapters behind the **unchanged** authority path, plus
-the credential broker. Each adapter is: build a task packet, spawn, watch a result file.
-**CASE 2 closes** — because no adapter is permitted to make chat identity load-bearing.
-`workers.conf` grows rows; **`routing.py` is not touched.**
-Gate: §16's credential rules, especially "secrets never enter `paths.spec`."
-
-### M5 — Planner, in propose-only mode
-Roadmap/milestone/batch tables, admission gate, `proposals`. Admitted tasks are created
-with `approval_required = 1` for the first two weeks, so David sees exactly what the
-planner produces before anything runs unattended. Flip to auto-admit per roadmap only
-once the gate has a clean record.
-
-### M6 — Verification profiles and notification escalation
-Content/data/deploy profiles, positive-assertion requirement, diff-scope enforcement,
-approval TTLs, the full notification matrix.
-
-### M7 — Astra review
-Hand Astra the pack in §25 plus the M0–M6 record.
-
-### On the freeze
-
-Frozen files are touched **only** at M4, and only if an adapter genuinely requires it —
-which it should not, since `dispatch_policy.assign` is already worker-agnostic and
-`routing.py` already decides from registry data alone. If M4 finds it must edit a frozen
-module, that is a signal the design went wrong, not a reason to update the manifest.
-
----
+**Frozen-file impact is unchanged for R0–R7: zero.** R8 is the one deliberate frozen edit, and
+it is sequenced last on purpose — see `RECONCILIATION.md` §10 for why the two-database
+collapse is the right end state and the wrong first move.
 
 ## 21. Acceptance-test suite
 
@@ -1644,6 +1739,23 @@ class Case8_LegitimateIdleIsDistinguishable:
 ### The cases the brief does not name
 
 ```python
+class FailedRunIsReconcilableAfterCrash:          # [NEW] B-1 regression
+    # Commit a journal terminal 'failed', raise before _reconcile_journal_terminal,
+    # reopen from fresh connections, assert recover() returns the task to 'ready'
+    # with attempts incremented AND the worktree lease released.
+    # Companion: one unreconcilable row must not stop a second wedged run in the sweep.
+
+class RecoveryIsNotScopedToOneWorker:             # [NEW] B-2 regression
+    # Assign to qwen3-local, kill the runner, assert recover() reclaims it.
+    # Property form: for EVERY worker id in config/workers.conf, a dead runner is reclaimed.
+
+class TickPromotesPendingItself:                  # [NEW] B-3 regression
+    # add_task -> tick -> assert the task reached 'ready' with no human verb invoked.
+
+class HealthPredicateEqualsExecutionPredicate:    # [NEW] B-4 regression
+    # For every ready task the doctor calls undispatchable, status MUST report a finding.
+    # Property test: there is no ledger state where execution denies and health says HEALTHY.
+
 class ControllerAlwaysExplainsIdle:
     # Property test over generated ledger states: NO tick may ever end with
     # dispatched=0 AND running=0 AND idle_reason=''.
@@ -1700,6 +1812,9 @@ is what this system is for.
 
 | # | Work | New LOC | Frozen? | Closes |
 | --- | --- | --- | --- | --- |
+| **0a** | **[NEW] Fix B-1 — reconcile `failed` runs (both sites) + per-iteration try/except + tests** | **60** | **no** | **the permanent wedge** |
+| **0b** | **[NEW] Fix B-2 — de-scope `recover()` pass 2 from `LOCAL_WORKER`** | **40** | **no** | **orphaned non-qwen assignments** |
+| **0c** | **[NEW] The doctor — `evaluate_authorization` dry-run over the ready queue** | **120** | **no** | **B-4, silent idle** |
 | 1 | Operations-DB migrations (additive ALTERs + new tables) | 150 | no | — |
 | 2 | Heartbeat in `dispatch_runner.py` | 40 | no | F-3 |
 | 3 | `liveness.py` — six signals + verdict | 220 | no | F-3, CASE 3 |
@@ -1724,8 +1839,13 @@ is what this system is for.
 change to `routing.py` or `dispatch_policy.py`, stop and re-examine — those modules are
 already vendor-neutral by test.
 
-**Order is load-bearing.** Steps 1–8 close the brief's primary complaint in roughly
-1,270 lines. Everything after is hardening and reach. Do not reorder 16 before 8: a
+**[REVISED] Steps 0a–0c come first and are non-negotiable.** They are 220 lines, touch no
+frozen file, and are independently valuable whatever the unreadable branch contains. Without
+0a a crash wedges a task forever; without 0b widening dispatch orphans everything that is not
+qwen; without 0c the wedge is invisible and the system reports HEALTHY.
+
+**Order is load-bearing.** Steps 0a–8 close the brief's primary complaint in roughly
+1,490 lines. Everything after is hardening and reach. Do not reorder 16 before 8: a
 planner that generates work for a system that cannot start it makes the idle-Mac problem
 worse, not better.
 
@@ -1748,14 +1868,47 @@ worse, not better.
 | **Unbounded planner** | Budget, path scope, tier ceiling, document hash |
 | **Multi-machine / distributed** | One Mac. Adding a second machine reopens Boundary 0 wholesale |
 | **Rewriting the authority surface** | It is the best part of the system. V2 is drive, not policy |
+| **[NEW] A scheduler inside `durable_workflow.py`** | That is the second scheduler. Its loop policy is donated into one unfrozen `scheduler.py`; the engine is retired |
+| **[NEW] A second permission system** | Everything except `taskstore.grant_approval` is **DENY-ONLY**: it may refuse, and force `approval_required=True` at admission, but may never record, cache, satisfy or substitute a grant |
+| **[NEW] `main`'s `model_router.py` as a router** | Worker selection *is* model selection. Keep its `TASK_TYPES` table, retire the engine |
+| **[NEW] A heartbeat on a supervisor timer** | Definitionally redundant with `runner_identity_state == "matched"`. Only a progress-gated heartbeat is a new fact |
 | **Worktrees for every task** | Expensive, and read-only/analysis tasks do not need them |
 | **A second orchestrator** | Explicitly what the brief asked to avoid, and correctly |
 
 ---
 
-## 24. Risks and edge cases
+## 24. [REVISED] Risks and edge cases
 
-Adversarial. Ordered by *how quietly this fails*.
+Adversarial. Ordered by *how quietly this fails*. **R-0a…R-0d are new, are live on the Mac
+today, and were verified against the source — they are not hypotheticals.**
+
+**R-0a — A failed run wedges its task and its worktree forever. [B-1, VERIFIED]**
+`recover()` filters `{"succeeded","cancelled"}` at `dispatcher.py:1884` and `:1666`. The repair
+function accepts `"failed"` and is unreachable. Crash between the two database commits ⇒ task
+permanently `assigned`, lease held by a dead pid, `recover` returns 0 forever. Traverses the
+most common terminal path in the system.
+*Mitigation:* implementation step 0a. **Prerequisite for the loop.**
+
+**R-0b — Widening dispatch orphans everything that is not qwen. [B-2, VERIFIED]**
+`recover()` pass 2 skips `task.assigned_worker != LOCAL_WORKER`. Every migration widens
+dispatch before recovery, so this gap opens by default.
+*Mitigation:* step 0b, landed **before** anything new calls `dispatch_policy.assign`.
+
+**R-0c — A tick on `dispatcher.sh` verbs sees an empty queue forever. [B-3, VERIFIED]**
+`add_task` hardcodes `'pending'`; `evaluate()`'s only production caller is the frozen,
+human-typed `control-plane.py:138`; `dispatcher.py` references it zero times.
+*Mitigation:* the tick calls `store.evaluate()` itself from unfrozen code (§7).
+
+**R-0d — HEALTHY is computed by a weaker predicate than execution. [B-4, VERIFIED]**
+`findings = failed + blocked + awaiting_approval`; `ready` and `assigned` are not terms. A
+100%-undispatchable queue and a wedged task both exit HEALTHY.
+*Mitigation:* the doctor (§7.4). **This is the mitigation that makes "silently" false.**
+
+**R-0e — Three databases, three clocks, no alarm on divergence.**
+If `state/durable-workflows.db` carries a status column read as a precondition to advance, the
+one component with a clock gates on columns the authority cannot write, and R-0d guarantees
+nobody is told.
+*Mitigation:* `RECONCILIATION.md` §16 Q1 and Q2 settle it; the engine is retired either way.
 
 **R-1 — Head-of-line blocking silently reproduces the original bug.**
 The natural implementation picks the top candidate, hits a denial, and returns. The Mac

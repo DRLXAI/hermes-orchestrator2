@@ -1,64 +1,64 @@
-# Hermes V2 — design review
+# Hermes — architecture review and reconciliation
 
-Architecture/design review for turning `DRLXAI/hermes-orchestrator` into a continuous
-autonomous work controller. **Design only — nothing here is implemented.**
+Design work for turning the Hermes orchestrator into a continuous autonomous work controller.
+**Design only — nothing here is implemented, deployed, or installed.**
 
-- [`docs/V2-CONTROLLER-ARCHITECTURE.md`](docs/V2-CONTROLLER-ARCHITECTURE.md) — the full
-  review: current-state assessment, remaining failure modes, V2 architecture, schema,
-  state machine, scheduler, planner, routing, concurrency, ownership, stall detection,
-  recovery, verification, approvals, security, persistence, status API, notifications,
-  migration, acceptance tests, implementation order, what not to build, risks.
-- [`docs/ASTRA-REVIEW-PACK.md`](docs/ASTRA-REVIEW-PACK.md) — ten unresolved design
-  questions for GPT-6 Astra's final adversarial review.
+- [`docs/RECONCILIATION.md`](docs/RECONCILIATION.md) — **read first.** How three divergent
+  implementations become one control plane: who is authoritative for each of fourteen
+  responsibilities, what is retired, what is donated, the minimum database architecture, the
+  migration, and the eleven questions that unblock the rest.
+- [`docs/V2-CONTROLLER-ARCHITECTURE.md`](docs/V2-CONTROLLER-ARCHITECTURE.md) — the full V2
+  design, **revised in place** after the reconciliation. `[REVISED]` marks corrected sections.
+- [`docs/ASTRA-REVIEW-PACK.md`](docs/ASTRA-REVIEW-PACK.md) — eleven unresolved questions for
+  GPT-6 Astra's final adversarial review.
 
-Reviewed tree: `feat/control-plane` @ `877fb63`.
+Reviewed: `feat/control-plane` @ `877fb63` and `main` @ `615ee9f`. A third implementation
+(`integrate/control-plane-dispatcher` @ `f2d64d9`) exists only on the Mac and was not readable.
 
-## The finding in one paragraph
+## There are three orchestrators, not one
 
-`dispatcher.sh run` takes `--id`. **No code path in the repository selects a task.**
-`taskstore.tasks(status="ready")` exists — its docstring even says *"Ordered the way a
-scheduler wants them"* — and nothing calls it to dispatch. There is no loop, no daemon,
-no LaunchAgent, and `jobs/*.yaml` are `enabled: false` by policy. The idle Mac is not a
-bug, a race or a durability defect: **Hermes V1 is a permission system, and David is its
-scheduler.** Every component answers *"may this run?"*; none asks *"what should run
-now?"*, and none starts anything.
+`main` and `feat/control-plane` are divergent siblings from merge base `b8dfd98` that have
+**never been merged**. Neither contains a line of the other.
 
-## What that means for V2
+| | past merge base | ships |
+| --- | --- | --- |
+| `main` @ `615ee9f` | +14,251 / 58 files | `model_router.py`, `policy_gate.py`, `verifier.py`, `project_registry.py`, `skill_registry.py`, local-qwen worker, YAML task format |
+| `feat/control-plane` @ `877fb63` | +18,962 / 43 files | `taskstore.py`, `dispatch_policy.py`, `routing.py`, `escalation.py`, `quota.py`, `worktree_lease.py`, `dispatcher.py` |
+| `f2d64d9` (Mac only) | unknown | `durable_workflow.py`, `state/durable-workflows.db` |
 
-The brief asks for durability, recovery and ownership. Hermes already has unusually
-strong versions of all three — authority is consumed rather than held, evidence is
-stamped rather than asserted, escalation is fabrication-resistant, process identity
-defeats pid reuse, and the worktree lease is acquired inside the assignment transaction.
-What is missing is **drive**: a selector, a trigger, an activity model, and adapters for
-every worker except local Qwen.
+So **two routers and two permission systems were already on GitHub** before durable-workflow
+existed. Six of the nine duplications found have nothing to do with the branch in question.
 
-Roughly 1,270 lines close the primary complaint (CASES 1, 3, 4, 8 for the local lane).
-About 4,750 lines close everything in the brief.
+## Four defects verified in the control plane
 
-## The two rules the design is built on
+All in `dispatcher.py`, which is **not** frozen. The seven frozen digests verify OK.
 
-1. **Everything new is an admission-side refusal or an operations-database row.** Nothing
-   new becomes a ledger state, a transition edge, or a column on a frozen table. This is
-   achievable end-to-end — including approval expiry, stall handling, holds, path
-   ownership and roadmap provenance — with **zero edits to the seven files pinned by
-   `config/control-plane-freeze.sha256`** through migration milestone M3.
-2. **Tick, not daemon.** `docs/THREAT_MODEL.md` records that a long-lived cached
-   `TaskStore` changes the ratified Boundary 0 premise. A launchd tick that opens the
-   ledger, acts and exits is indistinguishable from what `control-plane.sh` already does
-   on every invocation — and it removes "the daemon died" as a failure class entirely.
+- **B-1** — `recover()` can never reconcile a `failed` run. `_reconcile_journal_terminal`
+  accepts `"failed"` and is unreachable. A crash between the journal commit and the ledger
+  commit wedges the task at `assigned` with its worktree lease held, permanently. This is the
+  most common terminal path in the system.
+- **B-2** — `recover()` pass 2 skips every worker except `qwen-coder-local`.
+- **B-3** — nothing automated promotes `pending → ready`. The sole promoter's only production
+  caller is a frozen, human-typed verb; `dispatcher.py` references it zero times.
+- **B-4** — HEALTHY is computed by `routing.recommend()`; execution is gated by
+  `dispatch_policy.evaluate_authorization()`'s twelve checks; **nothing compares them.** A
+  100%-undispatchable queue exits HEALTHY.
 
-## The invariant that replaces "the task finished, so we stopped"
+B-4 is the structural reason the Mac goes idle *silently* rather than *noisily*.
 
-> A tick may never end with `dispatched = 0 AND running = 0 AND idle_reason = ''`.
-> **The controller must always be able to name why it is not working.**
+## The invariant
 
-Seven named idle reasons, of which `IDLE_LEGITIMATE` (all approved work complete) and
-`IDLE_ERROR` (eligible work, free capacity, no recorded denial) are distinct, notified
-and tested.
+> IF APPROVED ELIGIBLE WORK EXISTS, THE MAC MUST NOT SILENTLY BECOME IDLE.
 
-## Note on the brief
+Attacked through five independent lenses. **All five broke it** — because of B-1, B-2, B-3 and
+B-4 respectively, plus the unreadable third store. With those four closed, the strongest honest
+claim is:
 
-The brief describes `scripts/durable-workflow.sh`, `scripts/lib/durable_workflow.py`,
-`tests/test_durable_workflow.py` and `state/durable-workflows.db`, plus a V1 change that
-added `heartbeat_at`. None of those exist; `heartbeat` appears zero times in the
-repository. §0 of the review maps the brief's vocabulary onto the actual tree.
+> The Mac may still stop. It may not stop **silently**. Every tick either dispatches, or
+> records a named reason it did not, or fails to run at all — and the third case is caught by a
+> watchdog that shares no code with the tick.
+
+## Next task
+
+Fix B-1 in `scripts/lib/dispatcher.py` only. One commit, three parts. No new module, no
+scheduler, no LaunchAgent, no frozen file, no schema change. `RECONCILIATION.md` §18.
