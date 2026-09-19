@@ -1,0 +1,448 @@
+<title>Jev Threshold Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --paper:#f3f5f6;
+    --raised:#ffffff;
+    --ink:#0e1519;
+    --muted:#5c6a70;
+    --rule:#d3dadd;
+    --over:#b4410c;
+    --over-soft:#f5e3d8;
+    --under:#0d6a80;
+    --under-soft:#d9ebf0;
+    --honest:#4a5a61;
+    --ok:#2f6b46;
+    --shadow:0 1px 2px rgba(14,21,25,.06),0 8px 24px -16px rgba(14,21,25,.28);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --paper:#0c1316;--raised:#131e23;--ink:#e6edf0;--muted:#8ea2ab;--rule:#24323a;
+      --over:#f4915a;--over-soft:#3a2317;--under:#5ac9e2;--under-soft:#102c35;
+      --honest:#7e919a;--ok:#63b98a;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0c1316;--raised:#131e23;--ink:#e6edf0;--muted:#8ea2ab;--rule:#24323a;
+    --over:#f4915a;--over-soft:#3a2317;--under:#5ac9e2;--under-soft:#102c35;
+    --honest:#7e919a;--ok:#63b98a;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.8);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper);color:var(--ink);
+    font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+    font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:74rem;margin:0 auto;padding-inline:20px;padding-block:0}
+  section{padding-block:clamp(2.75rem,6vw,4.5rem)}
+  section + section{border-top:1px solid var(--rule)}
+
+  h1,h2,h3{font-family:Spectral,Georgia,"Times New Roman",serif;font-weight:600;text-wrap:balance;margin:0}
+  h1{font-size:clamp(2.1rem,5.6vw,3.6rem);line-height:1.06;letter-spacing:-.015em}
+  h2{font-size:clamp(1.45rem,3.2vw,2.05rem);line-height:1.15;letter-spacing:-.01em}
+  h3{font-size:1.06rem;font-weight:600}
+  p{margin:0}
+  .lede{font-size:clamp(1.05rem,2.1vw,1.25rem);color:var(--muted);max-width:56ch;line-height:1.55}
+  .prose{max-width:66ch;display:flex;flex-direction:column;gap:1rem}
+  .eyebrow{
+    font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+  }
+  code,.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+  code{font-size:.88em;background:var(--over-soft);color:var(--over);padding:.1em .34em;border-radius:3px}
+  .stack{display:flex;flex-direction:column;gap:1.5rem}
+  .stack-sm{display:flex;flex-direction:column;gap:.75rem}
+  strong{font-weight:600}
+
+  /* ---- hero ---- */
+  .hero{display:grid;grid-template-columns:1fr;gap:2.5rem;align-items:start}
+  @media(min-width:940px){.hero{grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:3.5rem}}
+  .hero-claim{font-size:1.02rem;color:var(--muted);max-width:52ch}
+
+  /* the instrument: claimed vs actual, direction encoded */
+  .gauge{background:var(--raised);border:1px solid var(--rule);border-radius:10px;padding:1.25rem;box-shadow:var(--shadow)}
+  .gauge-head{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:1.1rem}
+  .gauge figcaption{font-size:.82rem;color:var(--muted);margin-top:.9rem;line-height:1.5}
+  .legend{display:flex;gap:.9rem;flex-wrap:wrap;font-size:.72rem;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:.36rem}
+  .swatch{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+  /* ---- tables ---- */
+  .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:40rem}
+  caption{text-align:left;font-size:.82rem;color:var(--muted);padding-bottom:.6rem}
+  th,td{text-align:right;padding:.6rem .7rem;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums}
+  th:first-child,td:first-child{text-align:left;font-family:"IBM Plex Mono",monospace;font-size:.85rem}
+  thead th{
+    font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom-width:1.5px;
+  }
+  .split{border-left:1.5px solid var(--rule)}
+  .bad{color:var(--over);font-weight:500}
+  .good{color:var(--ok);font-weight:500}
+
+  /* ---- terminal ---- */
+  .term{
+    background:var(--ink);color:var(--paper);border-radius:10px;padding:1.1rem 1.25rem;
+    font-family:"IBM Plex Mono",monospace;font-size:.78rem;line-height:1.75;
+    overflow-x:auto;box-shadow:var(--shadow);
+  }
+  .term .c{color:#9fb3bb}
+  .term .h{color:#f4915a}
+  .term .u{color:#5ac9e2}
+  .term .g{color:#7fd6a3}
+
+  /* ---- cards ---- */
+  .grid{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+  .card{background:var(--raised);border:1px solid var(--rule);border-radius:10px;padding:1.1rem 1.2rem;display:flex;flex-direction:column;gap:.45rem}
+  .card p{font-size:.88rem;color:var(--muted);line-height:1.55}
+  .card .mono{font-size:.72rem;color:var(--muted)}
+
+  /* direction callouts: hot above the line, cold below */
+  .dirs{display:grid;gap:1rem;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))}
+  .dir{border-radius:10px;padding:1.1rem 1.2rem;border:1px solid var(--rule);display:flex;flex-direction:column;gap:.5rem}
+  .dir.over{background:var(--over-soft);border-color:color-mix(in srgb,var(--over) 35%,transparent)}
+  .dir.under{background:var(--under-soft);border-color:color-mix(in srgb,var(--under) 35%,transparent)}
+  .dir h3{font-family:"IBM Plex Mono",monospace;font-size:.76rem;letter-spacing:.1em;text-transform:uppercase}
+  .dir.over h3{color:var(--over)}
+  .dir.under h3{color:var(--under)}
+  .dir p{font-size:.9rem;line-height:1.55}
+
+  /* ---- pricing ---- */
+  .tiers{display:grid;gap:1.25rem;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));align-items:start}
+  .tier{background:var(--raised);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:flex;flex-direction:column;gap:.9rem}
+  .tier.lead{border-color:var(--ink);border-width:1.5px;box-shadow:var(--shadow)}
+  .price{font-family:Spectral,serif;font-size:2.5rem;line-height:1;font-weight:600}
+  .price small{font-size:.8rem;font-family:"IBM Plex Sans",sans-serif;color:var(--muted);font-weight:400}
+  .tier ul{margin:0;padding-left:1.1rem;display:flex;flex-direction:column;gap:.4rem;font-size:.9rem}
+  .tier li::marker{color:var(--muted)}
+  .buy{
+    display:inline-block;text-align:center;background:var(--ink);color:var(--paper);
+    text-decoration:none;font-weight:600;font-size:.95rem;padding:.8rem 1.4rem;border-radius:8px;
+    border:1.5px solid var(--ink);transition:opacity .15s;
+  }
+  .buy:hover{opacity:.86}
+  .buy.ghost{background:transparent;color:var(--ink)}
+  .buy:focus-visible{outline:2.5px solid var(--under);outline-offset:3px}
+
+  .note{font-size:.82rem;color:var(--muted);line-height:1.6;max-width:66ch}
+  .refs{display:flex;flex-direction:column;gap:.55rem;font-size:.84rem;color:var(--muted);max-width:70ch}
+  .refs a{color:var(--under);text-decoration-thickness:1px;text-underline-offset:2px}
+  footer{padding-block:2.5rem;border-top:1px solid var(--rule);font-size:.8rem;color:var(--muted)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="stack">
+      <p class="eyebrow">Calibration kit · TypeSafe Jev · System One</p>
+      <h1>Jev's confidence is not a probability.</h1>
+      <p class="lede">It is monotone, and it is wrong — in a direction that flips with the
+        question type. So <code>if confidence &gt;= 0.9</code> is unsafe on two of your
+        three primitives and wasteful on the third.</p>
+      <p class="hero-claim">This kit measures the distortion on your own labelled data,
+        fits the correction, and returns the cutoff that costs you the least money.
+        Zero dependencies. Runs today through OpenRouter — no early-access key.</p>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+        <a class="buy" href="#pricing">Get the kit — $149</a>
+        <a class="buy ghost" href="#proof">See the numbers</a>
+      </div>
+    </div>
+
+    <figure class="gauge">
+      <div class="gauge-head">
+        <p class="eyebrow" style="margin:0">What it claims vs what it delivers</p>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--over)"></i>overconfident</span>
+          <span><i class="swatch" style="background:var(--under)"></i>underconfident</span>
+        </div>
+      </div>
+
+      <!-- Real measurements from the shipped 1,400-ticket set. x: 65%..100% -->
+      <svg viewBox="0 0 560 250" width="100%" role="img"
+           aria-label="Three questions plotted on a confidence axis. department claims 99.96 percent and delivers 94.36. frustration claims 99.69 and delivers 89.36. refund_eligible claims 82.83 and delivers 89.36 — the only one that understates.">
+        <defs>
+          <marker id="ah-over" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--over)"></path>
+          </marker>
+          <marker id="ah-under" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="var(--under)"></path>
+          </marker>
+        </defs>
+
+        <!-- axis -->
+        <line x1="60" y1="208" x2="540" y2="208" stroke="var(--rule)" stroke-width="1.5"></line>
+        <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="middle">
+          <text x="60"  y="226">65%</text>
+          <text x="197" y="226">75%</text>
+          <text x="334" y="226">85%</text>
+          <text x="471" y="226">95%</text>
+          <text x="300" y="243" font-size="9" letter-spacing="1.2">SHARE OF ANSWERS THAT ARE ACTUALLY CORRECT →</text>
+        </g>
+        <g stroke="var(--rule)" stroke-width="1" stroke-dasharray="2 4">
+          <line x1="197" y1="24" x2="197" y2="208"></line>
+          <line x1="334" y1="24" x2="334" y2="208"></line>
+          <line x1="471" y1="24" x2="471" y2="208"></line>
+        </g>
+
+        <!-- department: actual 94.36 -> claimed 99.96 (over) -->
+        <g>
+          <text x="60" y="40" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">department</text>
+          <text x="152" y="40" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">Choice</text>
+          <line x1="403" y1="56" x2="537" y2="56" stroke="var(--over)" stroke-width="2.5" marker-end="url(#ah-over)"></line>
+          <circle cx="403" cy="56" r="4.5" fill="var(--honest)"></circle>
+          <text x="397" y="60" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--honest)" text-anchor="end">94.4</text>
+          <text x="470" y="44" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--over)" text-anchor="middle">claims 99.96%</text>
+        </g>
+
+        <!-- frustration: actual 89.36 -> claimed 99.69 (over, biggest gap) -->
+        <g>
+          <text x="60" y="104" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">frustration</text>
+          <text x="152" y="104" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">Score</text>
+          <line x1="334" y1="120" x2="533" y2="120" stroke="var(--over)" stroke-width="2.5" marker-end="url(#ah-over)"></line>
+          <circle cx="334" cy="120" r="4.5" fill="var(--honest)"></circle>
+          <text x="328" y="124" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--honest)" text-anchor="end">89.4</text>
+          <text x="437" y="108" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--over)" text-anchor="middle">claims 99.69%</text>
+        </g>
+
+        <!-- refund_eligible: actual 89.36 -> claimed 82.83 (under, arrow points LEFT) -->
+        <g>
+          <text x="60" y="168" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink)">refund_eligible</text>
+          <text x="180" y="168" font-family="IBM Plex Mono, monospace" font-size="9" fill="var(--muted)">Noul</text>
+          <line x1="334" y1="184" x2="252" y2="184" stroke="var(--under)" stroke-width="2.5" marker-end="url(#ah-under)"></line>
+          <circle cx="334" cy="184" r="4.5" fill="var(--honest)"></circle>
+          <text x="342" y="188" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--honest)">89.4</text>
+          <text x="293" y="172" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--under)" text-anchor="middle">claims 82.83%</text>
+        </g>
+      </svg>
+
+      <figcaption>Grey dot: what the question actually gets right. Arrow: where its reported
+        confidence sits, and which way it lies. Two questions overstate. One understates.
+        Measured on the 1,400-ticket set that ships with the kit.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ THE TWO DIRECTIONS ============ -->
+  <section class="stack">
+    <div class="prose">
+      <p class="eyebrow">Why one threshold cannot work</p>
+      <h2>The error has a sign, and a scalar ECE does not carry it.</h2>
+      <p>Independent measurements of <span class="mono">jev-1.13</span> put Choice and Score
+        <strong>overconfident</strong> at a temperature around 3.3&ndash;3.4, and Noul
+        <strong>underconfident</strong> at around 0.66 — on the same 900 inputs. Both read as
+        "ECE = 0.08". They need opposite corrections.</p>
+    </div>
+
+    <div class="dirs">
+      <div class="dir over">
+        <h3>Too hot &nbsp;·&nbsp; Choice, Score</h3>
+        <p>A <code>&gt;= 0.9</code> gate admits answers that are nowhere near 90% likely. You
+          auto-act on errors at a rate the number conceals — and because Jev never emits
+          text, there is no odd-looking output to catch your eye.</p>
+      </div>
+      <div class="dir under">
+        <h3>Too cold &nbsp;·&nbsp; Noul</h3>
+        <p>The same gate rejects answers that were fine. You pay for human review you did not
+          need, and the escalation bill quietly eats the 400× cost saving that justified
+          moving to Jev in the first place.</p>
+      </div>
+    </div>
+
+    <p class="note">Both failures are silent, and which one you get depends on the primitive
+      rather than on anything visible in the response. The first symptom is a number on a
+      monthly report.</p>
+  </section>
+
+  <!-- ============ PROOF ============ -->
+  <section id="proof" class="stack">
+    <div class="prose">
+      <p class="eyebrow">Measured, not asserted</p>
+      <h2>What a reflex cutoff does to a real workload.</h2>
+      <p>Below is the kit's own output on the 1,400-ticket set it ships with — fitted on 979
+        rows, every number verified on the 421 it never saw.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption>Error costed at $6.00, review at $0.55. Held-out verification.</caption>
+        <thead>
+          <tr>
+            <th scope="col">question</th>
+            <th scope="col">fitted</th><th scope="col">covers</th><th scope="col">precision</th><th scope="col">$/1k</th>
+            <th scope="col" class="split">raw 0.9 covers</th><th scope="col">precision</th><th scope="col">$/1k</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>department</td>
+            <td>&ge; 0.93</td><td>57.0%</td><td class="good">99.58%</td><td>250.75</td>
+            <td class="split bad">100.0%</td><td class="bad">95.01%</td><td>299.33</td>
+          </tr>
+          <tr>
+            <td>frustration</td>
+            <td>&ge; 0.92</td><td>42.0%</td><td class="good">94.92%</td><td>447.07</td>
+            <td class="split bad">100.0%</td><td class="bad">90.26%</td><td>584.36</td>
+          </tr>
+          <tr>
+            <td>refund_eligible</td>
+            <td>&ge; 0.90</td><td>51.8%</td><td class="good">94.95%</td><td>422.01</td>
+            <td class="split bad">15.9%</td><td>97.01%</td><td>491.01</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p>Read the right-hand block. On the two overconfident questions a raw <code>0.9</code>
+        gate passes <strong>100% of traffic</strong> — it gates nothing at all — at 95% and
+        90% precision. On the underconfident one it passes <strong>15.9%</strong>, sending six
+        of every seven cases to a human who did not need to see them.</p>
+    </div>
+
+    <div class="term" role="img" aria-label="Terminal output showing a raw confidence of 0.9996 calibrating down to 0.891, below the 0.93 bar, so the decision is escalated rather than auto-routed.">
+<span class="c">$ python3 examples/triage_live.py</span>
+served by typesafe/jev-1.13-20260917  214 tok  $0.000009
+
+department       billing      raw <span class="h">0.9996</span> -&gt; calibrated <span class="g">0.891</span> (bar 0.93)   <span class="u">escalate</span>
+refund_eligible  0.88         raw <span class="u">0.7600</span> -&gt; calibrated <span class="g">0.856</span> (bar 0.90)   <span class="u">escalate</span>
+frustration      1.9          raw <span class="h">0.9987</span> -&gt; calibrated <span class="g">0.873</span> (bar 0.92)   <span class="u">escalate</span>
+
+-&gt; human review: angry, refund eligibility not established</div>
+    <p class="note">A raw confidence of <strong>0.9996</strong> calibrates to <strong>0.891</strong>
+      and falls below the bar. Every reflex threshold would have auto-routed that ticket.</p>
+  </section>
+
+  <!-- ============ WHAT'S IN IT ============ -->
+  <section class="stack">
+    <div class="prose">
+      <p class="eyebrow">What you get</p>
+      <h2>Eight modules, 44 tests, no dependencies.</h2>
+      <p>Standard library only, on purpose: this runs inside your repository and your CI, and
+        a calibration tool with a dependency tree is a calibration tool nobody adopts.</p>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>Signed calibration</h3><p class="mono">metrics.py</p>
+        <p>ECE with its direction and a simulated noise floor, so a number means something
+          instead of sounding like it does.</p></div>
+      <div class="card"><h3>Two fitters</h3><p class="mono">calibrate.py</p>
+        <p>Isotonic and temperature, always verified on held-out data, with a bootstrap
+          interval on T because the estimator is noisy at the sizes you actually have.</p></div>
+      <div class="card"><h3>Cost-optimal cutoffs</h3><p class="mono">thresholds.py</p>
+        <p>Give it what an error and a review cost. It returns the threshold, the coverage,
+          and a Wilson lower bound — the number to budget against.</p></div>
+      <div class="card"><h3>Pinned profiles</h3><p class="mono">profile.py</p>
+        <p>Question, model build, calibration map and threshold saved as one artefact.
+          Commit it; gate on it.</p></div>
+      <div class="card"><h3>Drift tripwire</h3><p class="mono">guard.py</p>
+        <p><span class="mono">jev-latest</span> is an alias and aliases move. Exit code 2 when
+          the build underneath your thresholds changes. Put it in CI.</p></div>
+      <div class="card"><h3>Jev client</h3><p class="mono">client.py</p>
+        <p>OpenRouter's decisions endpoint or TypeSafe direct, same typed result. Bounded
+          retries. Keys never reach a log line.</p></div>
+      <div class="card"><h3>The memo</h3><p class="mono">report.py</p>
+        <p>A page you forward to whoever owns the budget, decision first and statistics
+          underneath.</p></div>
+      <div class="card"><h3>The playbook</h3><p class="mono">PLAYBOOK.md</p>
+        <p>Ten rules for shaping questions — primitive selection, the polarity trap,
+          none-of-these, stakes-scaled cutoffs, shadow mode.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ HONEST ============ -->
+  <section class="stack">
+    <div class="prose">
+      <p class="eyebrow">Three answers you will not enjoy</p>
+      <h2>It is built to tell you no.</h2>
+    </div>
+    <div class="grid">
+      <div class="card"><h3>“DO NOT AUTOMATE”</h3>
+        <p>When an error costs 60× a review and the question runs at 92%, no cutoff beats
+          sending everything to a human. The kit says so, instead of finding you a threshold
+          that looks fine and loses money quietly.</p></div>
+      <div class="card"><h3>“UNMEASURABLE”</h3>
+        <p>Below a few hundred labels a perfect model and a broken one score the same ECE.
+          The most-cited public Jev benchmark is n=60, where a flawless model scores ≈0.045 —
+          the range it reports. The kit refuses to pretend.</p></div>
+      <div class="card"><h3>Your error cost is wrong</h3>
+        <p>Most people estimate the review cost well and the error cost by a factor of ten,
+          because the true cost of a bad auto-refund is the refund, the churn and the
+          apology — not the agent minute.</p></div>
+    </div>
+  </section>
+
+  <!-- ============ PRICING ============ -->
+  <section id="pricing" class="stack">
+    <div class="prose">
+      <p class="eyebrow">Pricing</p>
+      <h2>One payment. Yours permanently.</h2>
+    </div>
+    <div class="tiers">
+      <div class="tier lead">
+        <p class="eyebrow">The Kit</p>
+        <p class="price">$149 <small>once</small></p>
+        <ul>
+          <li>Full source, MIT licensed, no runtime dependencies</li>
+          <li>All eight modules and the 44-test suite</li>
+          <li>The 1,400-row worked example and its data</li>
+          <li><span class="mono">PLAYBOOK.md</span> — the ten question-design rules</li>
+          <li>Updates as Jev's builds move, at no extra cost</li>
+        </ul>
+        <a class="buy" href="#">Buy on Whop</a>
+        <p class="note" style="font-size:.78rem">For the engineer who owns a classification
+          path and needs to know what the threshold should be.</p>
+      </div>
+      <div class="tier">
+        <p class="eyebrow">Calibration Run</p>
+        <p class="price">$449 <small>once</small></p>
+        <ul>
+          <li>Everything in The Kit</li>
+          <li>Send a labelled export; profiles come back fitted</li>
+          <li>Written report: per-question thresholds, coverage, projected monthly cost</li>
+          <li>A go / no-go on each question, with the reasoning</li>
+          <li>One follow-up round after you have shadow-mode data</li>
+        </ul>
+        <a class="buy ghost" href="#">Buy on Whop</a>
+        <p class="note" style="font-size:.78rem">For the team that wants the answer this week
+          rather than the tooling.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ EVIDENCE ============ -->
+  <section class="stack">
+    <div class="prose">
+      <p class="eyebrow">Sources</p>
+      <h2>The distortion figures are other people's measurements.</h2>
+      <p>Not ours, and not the vendor's. Jev shipped in September 2026 and is still early
+        access, so treat every number here — including the kit's own — as something to
+        re-measure on your traffic. That is, after all, the entire point.</p>
+    </div>
+    <div class="refs">
+      <p><a href="https://github.com/scienthoon/jev-ood-calibration">scienthoon/jev-ood-calibration</a>
+        — per-type signs on 900 rule-generated tickets: Choice and Score overconfident
+        (T 3.3–3.4), Boolean underconfident (T 0.66).</p>
+      <p><a href="https://github.com/SamuelSacco/jev-exploration">SamuelSacco/jev-exploration</a>
+        — an 800-item difficulty gradient, ECE at 2.1–2.5× its noise floor at every tier, and
+        the argument that an n=60 benchmark cannot measure calibration at all.</p>
+      <p><a href="https://github.com/Anil-matcha/awesome-jev-by-typesafe">awesome-jev-by-typesafe</a>
+        and <a href="https://github.com/rajivkuriakose/typesafe-jev-examples">typesafe-jev-examples</a>
+        — the protocol, the three primitives, and the instruction/criteria polarity trap.</p>
+      <p>TypeSafe's own documentation: calibration “is measured across groups of predictions;
+        it does not guarantee that an individual answer is correct,” and confidence thresholds
+        should be tested on your own data. This kit is how you do that.</p>
+    </div>
+  </section>
+
+  <footer>
+    Jev Threshold Kit · MIT licensed · Not affiliated with TypeSafe AI.
+    Figures above are held-out measurements on the dataset shipped with the kit; your workload
+    will differ, which is why the kit measures yours.
+  </footer>
+</div>
