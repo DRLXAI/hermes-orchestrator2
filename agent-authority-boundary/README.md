@@ -13,13 +13,18 @@ permitted, what resources are in scope, whether a human must approve, whether it
 whether external side effects are allowed. No model output, confidence score or classifier
 result participates.
 
-**OBSERVE** — shadow mode. Record what a decision model *would* have advised, alongside the
-deterministic outcome, without letting it act. Keep `operator_agreed` (concordance) rigorously
-apart from `ground_truth` (correctness). Missing truth stays UNKNOWN, never False.
+**OBSERVE** — shadow mode, plus independent effect observation. Record what a decision model
+*would* have advised without letting it act, and establish what the agent *actually did* from
+evidence it did not author. The Git observer reads the repository directly: added, modified,
+deleted, renamed and type-changed paths, symlinks and submodules, working-tree dirt, and the
+resulting tree identity. `operator_agreed` (concordance) stays rigorously apart from
+`ground_truth` (correctness), and missing truth stays UNKNOWN, never False.
 
-**CALIBRATE** — only once genuine labelled evidence exists. This package reports what evidence
-it has and refuses to conclude; it exports a clean dataset for a specialist tool such as
-[jevcal](https://github.com/abhixhek/jevcal) rather than reimplementing calibration.
+**CALIBRATE** — only once genuine labelled evidence exists, and only against a target the
+operator states. Checking many questions at once is a multiple-comparison problem, so no
+aggregate claim is available unless you ask for an explicit correction. This package exports a
+clean dataset for a specialist tool such as [jevcal](https://github.com/abhixhek/jevcal) rather
+than reimplementing calibration.
 
 ## Why the boundary is separate from model judgment
 
@@ -40,7 +45,7 @@ adapter returning `ALLOW` is not granting permission — it is declining to obje
 
 ```python
 from authority.policy import load
-from authority.engine import ActionRequest, decide, verify_effect
+from authority.engine import ActionRequest, decide
 from authority.adapters.jev import JevAdapter, JevResponse
 
 policy = load({
@@ -62,8 +67,12 @@ advice = JevAdapter().advise(
 )
 decision = decide(policy, ActionRequest("write_doc", ("docs/pricing.md",)), advice)
 
-# After acting: what was ACTUALLY touched, not what was declared beforehand.
-finding = verify_effect(decision, observed_resources=["docs/pricing.md"], policy=policy)
+# After acting: what was ACTUALLY touched, determined by reading the repository — not by
+# asking the agent. An unavailable observation is UNKNOWN, never "clean".
+from authority.observers.git import GitEffectObserver, assess_git_effect
+
+observation = GitEffectObserver(repo="/path/to/repo").observe(baseline="<pre-run commit sha>")
+finding = assess_git_effect(observation, ["docs/**"], declared_resources=["docs/pricing.md"])
 ```
 
 ## CLI
@@ -94,8 +103,9 @@ measured on real traffic. See `docs/GAPS.md` for what is missing and
 ./run_tests.sh          # all four suites
 ```
 
-66 tests: adversarial attacks, the Jev adapter against Jev's real response shape, persistence and
-trust, and the quickstart above executed verbatim. Five critical invariants are mutation-tested —
-inverting any one of them fails the suite.
+116 tests: adversarial attacks, the Git observer against real repositories, the Jev adapter
+against Jev's real response shape, persistence and trust, and the quickstart above executed
+verbatim. Seven critical invariants are mutation-tested — inverting any one of them fails the
+suite.
 
 Zero dependencies, standard library only — deliberate for security-sensitive infrastructure.

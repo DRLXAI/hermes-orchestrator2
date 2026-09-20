@@ -1,73 +1,93 @@
 # Gap assessment
 
-Against the build proposal, checked at the point of writing. 66 tests across four suites, zero
-dependencies.
+116 tests across six suites, zero dependencies. Checked at the point of writing.
 
 ## Built and verified
 
-| Item | Status |
+| Area | Status |
 |---|---|
-| 1 Persistent OBSERVE layer | **Done.** SQLite, append-only, hash-chained, tamper-evident. |
-| 2 Human-confirmed outcome/review workflow | **Done.** Separate approval and outcome queues; both require a trusted named actor. |
-| 3 Concordance vs correctness | **Done.** Different row kinds; approval never labels; export cannot carry agreement. |
-| 4 Calibration dataset/export | **Done.** Trusted labels only, JSONL, consumable by jevcal or the kit. |
-| 5 Target-dependent readiness | **Done.** Wilson interval against the operator's target. Four states incl. TARGET_REQUIRED. |
-| 6 CLI | **Done.** 9 subcommands; console script installs. |
-| 7 Example agent | **Done.** `examples/guarded_agent.py`, runnable. |
-| 8 Tool-scope guard | **Done.** Undeclared tools are UNKNOWN, not permission. |
-| 9 Threat model | **Done.** `docs/THREAT-MODEL.md`, including what it does *not* defend. |
-| 10 Migration notes | **Done.** `docs/MIGRATION.md`. |
-| 11 Kit corrections | **Done.** Applied; the kit's 44 tests still pass. |
-| 12 Clean-install onboarding | **Done.** Fresh venv, `pip install`, README quickstart extracted verbatim and executed. |
-| 13 Distribution structure | **Partial.** `pyproject.toml` + console script. Not published anywhere. |
-| 14 Adversarial + regression pass | **Done.** Plus a five-invariant mutation battery. |
+| PROTECT — deterministic boundary | Done. 8 guards; ceiling computed with no model input. |
+| Git effect observer | **Done.** Reads the repository directly; 29 tests against real repos. |
+| Evidence chain + trust model | Done. Append-only, hash-chained, trust from fingerprinted policy. |
+| Review workflow | Done. Approval and outcome are separate queues with separate meanings. |
+| Target-dependent readiness | Done. Wilson interval against the operator's stated target. |
+| Multiple comparisons | Done. No aggregate claim without an explicit correction. |
+| Drift monitoring | Done, minimal. Model-vs-pin and early-vs-late error rate. No scheduler. |
+| Jev adapter | Done, against the documented interface. Never run live. |
+| CLI, example, packaging | Done. Console script; clean-install verified. |
+| Kit corrections | Done. Kit's 44 tests still pass. |
 
-## Invariants, and the mutation that proves each is defended
+## Invariants and their mutation scores
 
-Inverting any one of these in the source fails the suite:
+Inverting any of these in the source fails the suite:
 
-| Invariant | Failing tests when inverted |
+| Invariant | Failing tests |
 |---|---|
-| Model output may never increase authority | 25 |
-| UNKNOWN != FALSE | 6 |
-| Storage does not confer trust | 4 |
-| OBSERVATION != LABEL | 2 |
-| DECLARED INTENT != OBSERVED EFFECT | 1 |
+| Model output may never increase authority | 28 |
+| UNKNOWN != FALSE | 13 |
+| Storage does not confer trust | 8 |
+| Unavailable evidence is never compliant | 6 |
+| DECLARED INTENT != OBSERVED EFFECT | 4 |
+| OBSERVATION != LABEL | 3 |
+| Both ends of a rename are observed | 2 |
 
-The last two are thin. More tests should bear on them directly rather than relying on one or
-two cases each.
+The two areas flagged as thin in the previous assessment (2 and 1) are now 3 and 4. They remain
+the weakest rows and are where I would add coverage next.
+
+## The multiple-comparison choice, and why
+
+Checking one question at 95% means a 5% chance of a spurious MEETS_TARGET; check twenty and
+expect roughly one by luck. The options were to invent a correction or to make the limitation
+visible. **Both were taken, explicitly:** `portfolio_readiness` refuses to emit an aggregate
+claim by default — `aggregate_claim_available` is `False` and `all_meet_target` returns `None`,
+not `False`, because the question is unanswerable rather than answered negatively. Requesting
+`correction="bonferroni"` tightens each test so the family-wise error rate matches the stated
+confidence, and then the claim becomes available.
+
+Bonferroni was chosen over sharper procedures (Holm, Benjamini–Hochberg) because it is
+assumption-free about correlation between questions and conservative in the direction that
+matters: the cost of a false "we are calibrated" is an agent acting on a threshold that is not
+there. A test proves the correction can actually withdraw a claim that survived uncorrected —
+20 questions × 100 perfect labels passes at 95% and fails once corrected.
 
 ## Not built
 
-- **Persistence hardening.** No WAL tuning, no concurrent-writer story, no retention/pruning, no
-  migration path if the schema changes. One process at a time is the assumption.
-- **No external anchoring.** The chain is tamper-evident against edits and deletes, not against a
-  full rewrite by someone with database write access.
-- **No cryptographic identity.** Trust is exact-string matching on a name in policy.
-- **No async / no framework adapters.** Sync library; no LangChain/LlamaIndex/MCP integration.
-- **Only one adapter.** The contract is model-independent but has been exercised against Jev only.
-- **No Whop package structure** (item 13) — not started, and out of scope until the product is
-  approved for sale.
-- **`Decision` is not persisted as an object.** It is flattened into the evidence row; there is no
-  `load_decision()` to rehydrate one for re-validation after a restart.
+- **One observer only.** Git repositories are verifiable. HTTP calls, database writes, emails,
+  payments, shell side effects — none are. For those, `verify_effect` is still only as good as
+  whatever the integrator wires in.
+- **Persistence hardening.** Single-process assumption. No WAL tuning, no concurrent writers, no
+  retention or pruning, no schema migration path.
+- **No external anchoring or signing.** The chain is tamper-evident against edits and deletions,
+  not against a full rewrite by anyone with database write access.
+- **Trust is name-based.** Exact string matching against policy. No key material, no identity
+  verification.
+- **No async, no framework adapters.** Sync library; no LangChain / LlamaIndex / MCP integration.
+- **Whop packaging and sales copy.** Deliberately not started.
 
-## Known weaknesses I would fix before charging anyone
+## V1 commercial-readiness audit
 
-1. **`verify_effect` depends entirely on the integrator.** Documented at length in the threat
-   model, but a library cannot tell a git diff from an agent's JSON claiming to be one. The
-   honest mitigation is a shipped observer for at least one common case (git worktree diff).
-2. **Readiness uses one question at a time.** No multiple-comparisons handling. An operator
-   checking twenty questions at 95% will see one spurious MEETS_TARGET by chance.
-3. **No drift monitoring loop.** The kit's `check()` idea is promoted to a guard, but nothing
-   periodically re-verifies that a model still matches its pin or that the error rate has held.
-4. **The Jev adapter is written against documented behaviour, not a live endpoint.** The response
-   shape was corrected against published interface documentation during this build; it has never
-   been run against the real service.
+| Question | Answer |
+|---|---|
+| Can another developer install it without our environment? | **Yes.** Verified: fresh venv, `pip install`, console script present, README quickstart extracted verbatim and executed against a real repository. |
+| Can they protect an agent before having calibration labels? | **Yes.** PROTECT is deterministic and needs no model and no data. |
+| Can they independently verify at least one real class of effect? | **Yes, for git repositories.** 29 tests covering out-of-scope writes/deletes/creates, renames at both ends, symlinks, submodules, dirty trees, baseline mismatch, repo identity mismatch, and agent declarations contradicting git. Nothing else is covered. |
+| Can they collect evidence without confusing observations with labels? | **Yes.** Structurally: a label requires a trusted named confirmer; mutation-tested. |
+| Can they review and confirm outcomes? | **Yes.** Separate approval and outcome queues, in library and CLI. |
+| Can they export legitimate calibration data? | **Yes.** Trusted labels only, JSONL, consumable by jevcal or the kit. Concordance cannot leak in. |
+| Can they use the Jev adapter without invented confidence? | **Yes.** Reported confidence for choice/score, derived and labelled `derived` for noul, and `unavailable` escalates rather than inventing a number. |
+| Does any model output have a path to increasing authority? | **No known path.** Combination is `min` over a total order; no operation raises a verdict; an adapter's ceiling is ALLOW ("no objection"); observations are clamped to the decision's verdict. Verified by 28 failing tests when the lattice is inverted. This is a claim about this library, not about a system that embeds it. |
 
-## Claims audit
+### What still prevents charging for V1
 
-Every factual claim in the shipped docs was checked against behaviour. No performance,
-calibration, accuracy or savings claim appears anywhere in this package. Test counts in this
-document and the README match the suite output at the time of writing (66). The only numeric
-claims are test counts and mutation-battery failure counts, both reproducible with
-`./run_tests.sh` and the battery in the build log.
+1. **The Jev adapter has never touched the live service.** It is correct against published
+   interface documentation. That is not the same as working.
+2. **One observer.** If a buyer's agent does anything other than edit a git repository, the
+   central claim does not apply to them.
+3. **No independent security review.** Every adversarial test here was written by the same
+   author as the code being tested.
+4. **No published package, no versioning or support commitment.** Not on PyPI; no changelog,
+   deprecation policy, or issue tracker.
+5. **Operational unknowns.** Single-process store, no concurrency or retention story, no
+   guidance on database placement beyond "somewhere the agent cannot write".
+6. **No real-world usage.** Zero external users, zero production hours, no evidence any of this
+   survives contact with a buyer's actual agent.

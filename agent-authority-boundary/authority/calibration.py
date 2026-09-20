@@ -205,3 +205,186 @@ def write_jsonl(rows: Sequence[dict[str, Any]], path: str | Path) -> Path:
     target = Path(path)
     target.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
     return target
+
+
+# ------------------------------------------------------------------ multiple comparisons
+#
+# Checking one question at 95% confidence means a 5% chance of a spurious MEETS_TARGET. Check
+# twenty and you should expect roughly one by luck alone. Reporting "all twenty met the target"
+# from twenty independent 95% tests is a claim the evidence does not support.
+#
+# The choice made here, deliberately: this package does NOT silently apply a correction, and it
+# does NOT pretend the problem does not exist. It refuses to emit an aggregate claim unless the
+# operator asks for one with an explicit correction. Bonferroni is offered because it is simple,
+# assumption-free and conservative -- it holds the family-wise error rate at the stated level
+# whatever the correlation between questions, which is the right trade when the cost of a false
+# "we are calibrated" is an agent acting on a threshold that is not there.
+#
+# The limitation is machine-visible: `aggregate_claim_available` is False, with a reason, unless
+# a correction was requested.
+
+
+@dataclass(frozen=True)
+class PortfolioReadiness:
+    """Readiness across several questions, with the multiple-comparison problem made explicit."""
+
+    results: tuple[Readiness, ...]
+    correction: str
+    family_confidence: float | None = None
+    per_test_confidence: float | None = None
+
+    @property
+    def aggregate_claim_available(self) -> bool:
+        """Whether an 'all questions meet the target' claim is statistically supported."""
+        return self.correction != "none"
+
+    @property
+    def all_meet_target(self) -> bool | None:
+        """True/False only when an aggregate claim is available; otherwise None (unanswerable)."""
+        if not self.aggregate_claim_available:
+            return None
+        return all(r.state is ReadinessState.MEETS_TARGET for r in self.results)
+
+    @property
+    def reason(self) -> str:
+        n = len(self.results)
+        if not self.aggregate_claim_available:
+            return (
+                f"{n} question(s) evaluated independently. No aggregate claim is available: "
+                f"{n} separate tests at the stated confidence would produce roughly "
+                f"{n * 0.05:.1f} spurious passes by chance at 95%. Re-run with "
+                "correction='bonferroni' to make a family-wise claim."
+            )
+        met = sum(1 for r in self.results if r.state is ReadinessState.MEETS_TARGET)
+        return (
+            f"{met}/{n} question(s) meet the target with a family-wise confidence of "
+            f"{self.family_confidence:.0%} (Bonferroni: each test run at "
+            f"{self.per_test_confidence:.4f})."
+        )
+
+
+def portfolio_readiness(
+    store: EvidenceStore,
+    questions: Sequence[str],
+    *,
+    target: Target,
+    correction: str = "none",
+) -> PortfolioReadiness:
+    """Readiness across several questions.
+
+    `correction="none"` (the default) evaluates each question independently and REFUSES to make
+    an aggregate claim. `correction="bonferroni"` tightens each test so the family-wise error
+    rate matches `target.confidence`, and then an aggregate claim is available.
+    """
+    if correction not in ("none", "bonferroni"):
+        raise ValueError(f"unknown correction {correction!r}; use 'none' or 'bonferroni'")
+    unique = list(dict.fromkeys(questions))
+    if correction == "none":
+        results = tuple(readiness(store, q, target=target) for q in unique)
+        return PortfolioReadiness(results=results, correction="none")
+
+    m = max(1, len(unique))
+    per_test = 1.0 - (1.0 - target.confidence) / m
+    tightened = Target(max_error_rate=target.max_error_rate, confidence=per_test)
+    results = tuple(readiness(store, q, target=tightened) for q in unique)
+    return PortfolioReadiness(
+        results=results, correction="bonferroni",
+        family_confidence=target.confidence, per_test_confidence=per_test,
+    )
+
+
+# ------------------------------------------------------------------ minimal drift monitoring
+#
+# Deliberately small: two questions an operator needs answered periodically, and no scheduler,
+# storage or dashboard. Run it from cron, CI or a health check.
+
+
+@dataclass(frozen=True)
+class DriftReport:
+    """Has the ground moved under a threshold that was fitted earlier?"""
+
+    question: str
+    pinned_model: str
+    observed_models: tuple[str, ...]
+    model_drifted: bool
+    earlier: Readiness | None
+    later: Readiness | None
+
+    @property
+    def error_rate_moved(self) -> bool:
+        """True when the two halves' confidence intervals do not overlap at all."""
+        if self.earlier is None or self.later is None:
+            return False
+        if None in (self.earlier.error_lower, self.later.error_lower):
+            return False
+        return (
+            self.earlier.error_upper < self.later.error_lower
+            or self.later.error_upper < self.earlier.error_lower
+        )
+
+    @property
+    def ok(self) -> bool:
+        return not self.model_drifted and not self.error_rate_moved
+
+    @property
+    def reason(self) -> str:
+        if self.model_drifted:
+            return (
+                f"model drift: policy pins {self.pinned_model!r} but "
+                f"{', '.join(self.observed_models)} produced advice. A threshold fitted against "
+                "one build is not evidence about another."
+            )
+        if self.error_rate_moved:
+            return (
+                "the error rate moved: the earlier and later halves of the labelled evidence "
+                "have non-overlapping confidence intervals."
+            )
+        if self.earlier is None or self.later is None:
+            return "not enough labelled evidence to split into two halves; no drift signal yet"
+        return "no model drift and no detected movement in the error rate"
+
+
+def check_drift(
+    store: EvidenceStore, policy: Any, question: str, *, target: Target, adapter: str = "jev"
+) -> DriftReport:
+    """Compare the models that actually answered against the pin, and early evidence against late.
+
+    Minimal by design: two signals, no scheduling, no history table.
+    """
+    pinned = dict(getattr(policy, "pinned_models", {})).get(adapter, "")
+    seen = tuple(
+        dict.fromkeys(
+            str(r.payload.get("model") or "")
+            for r in store.all_rows()
+            if r.kind == "advice" and r.payload.get("question") == question
+            and r.payload.get("model")
+        )
+    )
+    drifted = bool(pinned) and any(model != pinned for model in seen)
+
+    labelled = sorted(store.labelled(question), key=lambda r: r.recorded_at)
+    earlier = later = None
+    if len(labelled) >= 4:
+        half = len(labelled) // 2
+        earlier = _readiness_of(labelled[:half], question, target)
+        later = _readiness_of(labelled[half:], question, target)
+
+    return DriftReport(
+        question=question, pinned_model=pinned, observed_models=seen, model_drifted=drifted,
+        earlier=earlier, later=later,
+    )
+
+
+def _readiness_of(rows: Sequence[Any], question: str, target: Target) -> Readiness:
+    """Readiness over an explicit row subset, for the two halves of a drift comparison."""
+    errors = sum(1 for r in rows if r.payload.get("ground_truth") is False)
+    lower, upper = wilson_interval(errors, len(rows), target.confidence)
+    state = (
+        ReadinessState.MEETS_TARGET if upper < target.max_error_rate
+        else ReadinessState.FAILS_TARGET if lower > target.max_error_rate
+        else ReadinessState.INSUFFICIENT
+    )
+    return Readiness(
+        question=question, state=state, observed_count=len(rows), labelled_count=len(rows),
+        error_count=errors, target=target, error_lower=lower, error_upper=upper,
+    )

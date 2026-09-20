@@ -42,9 +42,19 @@ These are the load-bearing assumptions. If one is false, the boundary is decorat
 
 ## The attack that actually works
 
-**Wiring the agent's own report into `verify_effect`.** Everything else in this document is
-enforced by code. This one is enforced by the integrator's judgment, and nothing in the library
-can tell the difference between a git diff and an agent's JSON that claims to be one.
+**Wiring the agent's own report in as the observer.** Everything else in this document is
+enforced by code. This one is enforced by the integrator's judgment.
+
+**Partially closed for git.** `authority.observers.git.GitEffectObserver` reads the repository
+itself — added, modified, deleted, renamed (both ends), type-changed paths, symlinks,
+submodules, working-tree dirt, and the resulting tree identity. It takes the repo path and
+baseline commit from YOUR configuration, never from the agent, and refuses outright on a
+repository identity mismatch or an unreachable baseline. An agent's own declaration is admitted
+only as a claim to be contradicted by that evidence.
+
+**Still open everywhere else.** HTTP calls, database writes, emails, payments and shell side
+effects have no observer. For those, the library cannot tell the difference between a real
+observation and an agent's JSON claiming to be one.
 
 `store.authorised_effect()` returns `None` when only untrusted observers reported — deliberately
 UNKNOWN rather than empty — so a correct integration fails closed. But if you register the agent
@@ -77,4 +87,5 @@ filesystem audit log, an eBPF probe, a container diff. Not a field in the agent'
 | Operator agreement != correctness | separate row kinds; approval never labels | `test_persistence.py` |
 | Observation != label | `labelled()` requires `trust='trusted'` | `test_persistence.py` |
 | Confidence != authority | confidence never reaches a ceiling computation | `test_adversarial.py` |
-| Declared intent != observed effect | `verify_effect` + `authorised_effect` | both suites |
+| Declared intent != observed effect | `verify_effect`, `authorised_effect`, the git observer | `test_git_observer.py` (29), `test_invariants.py` |
+| Unavailable evidence is never compliant | `assess_git_effect` returns ESCALATE | `test_git_observer.py` |

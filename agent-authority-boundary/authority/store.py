@@ -197,16 +197,18 @@ class EvidenceStore:
         return row
 
     def record_effect(
-        self, correlation_id: str, *, resources: Sequence[str], observer: str
+        self, correlation_id: str, *, resources: Sequence[str], observer: str,
+        detail: Mapping[str, Any] | None = None,
     ) -> Row:
         """What was touched, according to `observer`.
 
         The agent naming itself here produces an untrusted row, which `authorised_effect`
         will refuse to treat as evidence. That is the point.
         """
-        return self._append(
-            correlation_id, "effect", observer, {"resources": list(resources)}
-        )
+        payload: dict[str, Any] = {"resources": list(resources)}
+        if detail is not None:
+            payload["detail"] = dict(detail)
+        return self._append(correlation_id, "effect", observer, payload)
 
     def record_outcome(
         self, correlation_id: str, *, ground_truth: bool, confirmed_by: str,
