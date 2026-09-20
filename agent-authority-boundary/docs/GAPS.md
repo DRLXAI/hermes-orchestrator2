@@ -21,6 +21,8 @@
 
 Inverting any of these in the source fails the suite:
 
+Reproduce with `python3 validation/mutation_battery.py`.
+
 | Invariant | Failing tests |
 |---|---|
 | Model output may never increase authority | 28 |
@@ -30,9 +32,24 @@ Inverting any of these in the source fails the suite:
 | DECLARED INTENT != OBSERVED EFFECT | 4 |
 | OBSERVATION != LABEL | 3 |
 | Both ends of a rename are observed | 2 |
+| No aggregate calibration claim without a correction | **1** |
 
-The two areas flagged as thin in the previous assessment (2 and 1) are now 3 and 4. They remain
-the weakest rows and are where I would add coverage next.
+The two areas flagged as thin previously (2 and 1) are now 3 and 4. The aggregate-calibration
+row is newly measured and is the weakest at 1 — a single assertion defends it. That and the
+rename row are where coverage should go next.
+
+## Jev live validation — BLOCKED
+
+Not done, and not doable from this environment. `validation/JEV-VALIDATION.md` records why:
+no `TYPESAFE_API_KEY` / `OPENROUTER_API_KEY`, and the proxy denies CONNECT to both
+`api.typesafe.ai:443` and `openrouter.ai:443`. Everything reachable without the service was
+established against a local stub (request format on the wire, documented response mapping, all
+transport failure modes, hostile inputs) and is explicitly labelled as stub-derived.
+
+**Finding recorded there:** `jevkit/client.py:150,159` substitutes `0.0` for a missing
+confidence, making a fabricated value indistinguishable from a genuine maximally-unsure answer.
+Fails safe for gating; a data-integrity problem for calibration. In the kit, not the boundary.
+Not fixed.
 
 ## The multiple-comparison choice, and why
 
