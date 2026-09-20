@@ -33,6 +33,11 @@ picks the cutoff that costs you the least money.
 
 ## What it does to the shipped example
 
+**These numbers come from `examples/make_dataset.py`, which generates a SYNTHETIC labelled set.**
+It reproduces the per-primitive distortion independent measurements report for `jev-1.13`, but it
+is not production traffic and is not a performance claim. The whole point of the kit is that you
+re-measure on your own data.
+
 ```
   question            fitted      cover    prec     $/1k   |  raw 0.9 cover    prec     $/1k
   ----------------------------------------------------------------------------------------

@@ -173,12 +173,14 @@ class ConfidenceCannotCreateAuthority(unittest.TestCase):
         pol = policy()
         req = ActionRequest("write_doc", ("docs/a.md",))
 
-        unsure = adapter.advise(JevResponse("jev-1.13", "safe?", True,
-                                            {"true": 0.52, "false": 0.48}), min_confidence=0.8)
+        unsure = adapter.advise(
+            JevResponse("jev-1.13", "safe?", "noul", 0.52), min_confidence=0.8
+        )
         self.assertIs(decide(pol, req, unsure).verdict, Verdict.ESCALATE)
 
-        sure = adapter.advise(JevResponse("jev-1.13", "safe?", True,
-                                          {"true": 0.99, "false": 0.01}), min_confidence=0.8)
+        sure = adapter.advise(
+            JevResponse("jev-1.13", "safe?", "noul", 0.99), min_confidence=0.8
+        )
         self.assertIs(decide(pol, req, sure).verdict, Verdict.ALLOW)
         # ...but only because the deterministic ceiling was already ALLOW.
         self.assertIs(decide(pol, req).verdict, Verdict.ALLOW)

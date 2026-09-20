@@ -31,6 +31,7 @@ class ActionRequest:
 
     action: str
     resources: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
     correlation_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
 
@@ -48,6 +49,10 @@ class Advice:
     question: str = ""
     answer: str = ""
     confidence: float | None = None
+    #: Where the confidence came from: 'reported' by the model, 'derived' by an adapter, or
+    #: 'unavailable'. A derived number is not comparable with a reported one, and mixing them
+    #: in one calibration set is a quiet way to produce a meaningless threshold.
+    confidence_source: str = ""
     #: True only when this row carries genuine ground truth, never an operator's agreement.
     labelled: bool = False
 
@@ -136,6 +141,25 @@ def _guard_resource_scope(rule: ActionRule, request: ActionRequest) -> Finding:
     return Finding("resource_scope", Verdict.ALLOW, f"{len(request.resources)} resource(s) in scope")
 
 
+def _guard_tool_scope(rule: ActionRule, request: ActionRequest) -> Finding:
+    if rule.tools is None:
+        if not request.tools:
+            return Finding("tool_scope", Verdict.ALLOW, "no tools requested and none declared")
+        return Finding(
+            "tool_scope",
+            UNKNOWN_VERDICT,
+            f"action declares no tool scope but {len(request.tools)} tool(s) were requested",
+        )
+    stray = [t for t in request.tools if t not in rule.tools]
+    if stray:
+        return Finding(
+            "tool_scope",
+            Verdict.STOP,
+            f"tool(s) outside the declared scope: {', '.join(sorted(stray)[:5])}",
+        )
+    return Finding("tool_scope", Verdict.ALLOW, f"{len(request.tools)} tool(s) in scope")
+
+
 def _guard_reversibility(rule: ActionRule) -> Finding:
     if rule.reversible is None:
         return Finding(
@@ -212,6 +236,7 @@ def decide(policy: Policy, request: ActionRequest, advice: Advice | None = None)
     if rule is not None:
         findings += [
             _guard_resource_scope(rule, request),
+            _guard_tool_scope(rule, request),
             _guard_reversibility(rule),
             _guard_side_effects(rule),
             _guard_approval(rule),

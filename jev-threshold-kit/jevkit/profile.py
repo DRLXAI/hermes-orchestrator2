@@ -74,8 +74,20 @@ class Profile:
 
     @property
     def saving_per_1k(self) -> float:
-        """Against shipping a reflex 0.90 cutoff on raw confidence."""
+        """Against shipping a reflex 0.90 cutoff on RAW confidence.
+
+        This is the real-world comparison and the one the README reports: what a team actually
+        ships by reflex is `if answer.confidence >= 0.9` on the value Jev returned. Do not
+        confuse it with `ThresholdChoice.saving_per_1k`, which uses a 0.90 cutoff on the
+        CALIBRATED probability -- a different, internal baseline that is near-zero by
+        construction. Both are correct; they answer different questions.
+        """
         return self.naive_cost_per_1k - self.cost_per_1k
+
+    #: Explicit alias. Same value, unambiguous name.
+    @property
+    def saving_vs_raw_090_per_1k(self) -> float:
+        return self.saving_per_1k
 
     def save(self, path: str | Path) -> Path:
         """Write the profile as JSON. Returns the path written."""

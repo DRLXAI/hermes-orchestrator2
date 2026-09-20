@@ -1,59 +1,73 @@
 # Gap assessment
 
-Written against the build proposal. Honest about what is not done.
+Against the build proposal, checked at the point of writing. 66 tests across four suites, zero
+dependencies.
 
-## Built and tested (34 tests, zero dependencies)
+## Built and verified
 
-| Proposal item | Status |
+| Item | Status |
 |---|---|
-| 1 PROTECT — deterministic boundary | **Done.** Verdict lattice, 7 guards, ceiling computed with no model input. |
-| 5 Adapter architecture | **Done.** `DecisionAdapter` protocol; authority layer imports no model. |
-| 6 Jev advisory-only | **Done.** Can narrow, never widen; confidence convention documented. |
-| 7 Guards | **Partial.** action, scope, side effects, approval, reversibility, model pinning, config integrity. Tool scope not done. |
-| 9 Adversarial tests | **Done.** 31 tests covering all 9 named attacks + 2000 randomised cases. Mutation-tested. |
-| 2 OBSERVE | **Partial.** Observation/EvidenceLog with observed-vs-labelled separation. No storage backend. |
-| 3 REVIEW / outcomes | **Partial.** `confirm_outcome` requires a named confirmer; concordance kept separate. No workflow/UI. |
-| 4 CALIBRATE | **Partial.** Readiness counts + export. Refuses to conclude without an operator-stated target. |
-| 8 Auditability | **Partial.** `Decision.explain()` + append-only log in memory. Not persisted. |
+| 1 Persistent OBSERVE layer | **Done.** SQLite, append-only, hash-chained, tamper-evident. |
+| 2 Human-confirmed outcome/review workflow | **Done.** Separate approval and outcome queues; both require a trusted named actor. |
+| 3 Concordance vs correctness | **Done.** Different row kinds; approval never labels; export cannot carry agreement. |
+| 4 Calibration dataset/export | **Done.** Trusted labels only, JSONL, consumable by jevcal or the kit. |
+| 5 Target-dependent readiness | **Done.** Wilson interval against the operator's target. Four states incl. TARGET_REQUIRED. |
+| 6 CLI | **Done.** 9 subcommands; console script installs. |
+| 7 Example agent | **Done.** `examples/guarded_agent.py`, runnable. |
+| 8 Tool-scope guard | **Done.** Undeclared tools are UNKNOWN, not permission. |
+| 9 Threat model | **Done.** `docs/THREAT-MODEL.md`, including what it does *not* defend. |
+| 10 Migration notes | **Done.** `docs/MIGRATION.md`. |
+| 11 Kit corrections | **Done.** Applied; the kit's 44 tests still pass. |
+| 12 Clean-install onboarding | **Done.** Fresh venv, `pip install`, README quickstart extracted verbatim and executed. |
+| 13 Distribution structure | **Partial.** `pyproject.toml` + console script. Not published anywhere. |
+| 14 Adversarial + regression pass | **Done.** Plus a five-invariant mutation battery. |
+
+## Invariants, and the mutation that proves each is defended
+
+Inverting any one of these in the source fails the suite:
+
+| Invariant | Failing tests when inverted |
+|---|---|
+| Model output may never increase authority | 25 |
+| UNKNOWN != FALSE | 6 |
+| Storage does not confer trust | 4 |
+| OBSERVATION != LABEL | 2 |
+| DECLARED INTENT != OBSERVED EFFECT | 1 |
+
+The last two are thin. More tests should bear on them directly rather than relying on one or
+two cases each.
 
 ## Not built
 
-- **Persistence.** `EvidenceLog` is in-memory. Nothing survives a restart.
-- **CLI / developer interface** (item 11). Library only.
-- **Example agent** (item 13).
-- **Tool-scope guard** (item 7) — filesystem/resource scope is done; tool allow-lists are not.
-- **Threat-model document** (item 13) — the trust-anchor table below is a start, not the document.
-- **Migration notes from the Jev Threshold Kit** (item 13).
-- **Whop package structure** (item 13).
-- **Kit audit remediation** (item 10) — findings below; no kit files changed yet.
+- **Persistence hardening.** No WAL tuning, no concurrent-writer story, no retention/pruning, no
+  migration path if the schema changes. One process at a time is the assumption.
+- **No external anchoring.** The chain is tamper-evident against edits and deletes, not against a
+  full rewrite by someone with database write access.
+- **No cryptographic identity.** Trust is exact-string matching on a name in policy.
+- **No async / no framework adapters.** Sync library; no LangChain/LlamaIndex/MCP integration.
+- **Only one adapter.** The contract is model-independent but has been exercised against Jev only.
+- **No Whop package structure** (item 13) — not started, and out of scope until the product is
+  approved for sale.
+- **`Decision` is not persisted as an object.** It is flattened into the evidence row; there is no
+  `load_decision()` to rehydrate one for re-validation after a restart.
 
-## Trust anchors
+## Known weaknesses I would fix before charging anyone
 
-Where every authority input comes from, and whether the acting agent can influence it.
+1. **`verify_effect` depends entirely on the integrator.** Documented at length in the threat
+   model, but a library cannot tell a git diff from an agent's JSON claiming to be one. The
+   honest mitigation is a shipped observer for at least one common case (git worktree diff).
+2. **Readiness uses one question at a time.** No multiple-comparisons handling. An operator
+   checking twenty questions at 95% will see one spurious MEETS_TARGET by chance.
+3. **No drift monitoring loop.** The kit's `check()` idea is promoted to a guard, but nothing
+   periodically re-verifies that a model still matches its pin or that the error rate has held.
+4. **The Jev adapter is written against documented behaviour, not a live endpoint.** The response
+   shape was corrected against published interface documentation during this build; it has never
+   been run against the real service.
 
-| Value | Source | Agent-writable | Trusted |
-|---|---|---|---|
-| action ceiling, scope, reversibility | loaded policy document | no | yes |
-| policy fingerprint | computed at load | no | yes |
-| pinned model id | policy | no | yes |
-| requested action + resources | the agent | **YES** | no — the subject, not an input |
-| advice verdict / confidence | decision model | **YES** | no — can only narrow |
-| observed resources after acting | execution environment | depends on host | **caller must supply from a trusted observer** |
+## Claims audit
 
-The last row is the one integrators get wrong. `verify_effect` is only as good as the source of
-`observed_resources`. If the agent reports what it touched, the check is theatre.
-
-## Kit audit (item 10) — corrected findings
-
-- **`guard.py`** — `check()` and `is_alias()` are correct working drift detection and are reused
-  here. `pinned()` is dead: both branches return the input unchanged and it never warns despite
-  its docstring, and it is not exported. **Remove it.**
-- **Raw vs calibrated savings** — NOT a bug. `Profile.naive_cost_per_1k` uses raw confidence
-  deliberately, with an explicit comment: comparing against the calibrated value would measure
-  the fitted threshold against itself and report ~zero saving. `ThresholdChoice.naive` serves a
-  different, internal comparison. Both are correct; the naming invites confusion. **Rename, do
-  not change behaviour.**
-- **Synthetic benchmark** — the README table is generated from `examples/make_dataset.py`, which
-  states plainly that it is synthetic, and the README labels the section "the shipped example"
-  and cites third-party sources for the distortion's shape. Disclosed, but not at the point of
-  display. **Add one inline line marking the table synthetic.**
+Every factual claim in the shipped docs was checked against behaviour. No performance,
+calibration, accuracy or savings claim appears anywhere in this package. Test counts in this
+document and the README match the suite output at the time of writing (66). The only numeric
+claims are test counts and mutation-battery failure counts, both reproducible with
+`./run_tests.sh` and the battery in the build log.

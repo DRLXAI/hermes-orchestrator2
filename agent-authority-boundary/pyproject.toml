@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-authority-boundary"
+version = "0.1.0"
+description = "Models can reduce authority. Models can never create authority."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["ai-agents", "authority", "safety", "guardrails", "calibration", "jev"]
+# No runtime dependencies, deliberately: this is security-sensitive infrastructure and every
+# dependency is another party who can change what it does.
+dependencies = []
+
+[project.scripts]
+authority = "authority.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["authority"]

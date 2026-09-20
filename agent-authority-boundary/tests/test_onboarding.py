@@ -32,7 +32,7 @@ class Quickstart(unittest.TestCase):
         self.assertTrue(decision.executable)
 
         advice = JevAdapter().advise(
-            JevResponse("jev-1.13", "is this edit safe?", True, {"true": 0.97, "false": 0.03}),
+            JevResponse("jev-1.13", "is this edit safe?", "noul", 0.97),
             min_confidence=0.8,
         )
         decision = decide(self.policy, ActionRequest("write_doc", ("docs/pricing.md",)), advice)

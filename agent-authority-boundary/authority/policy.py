@@ -33,6 +33,8 @@ class ActionRule:
     ceiling: Verdict
     #: Resource patterns this action may touch. None means undeclared -> not permission.
     scope: tuple[str, ...] | None = None
+    #: Tool names this action may invoke. None means undeclared -> not permission.
+    tools: tuple[str, ...] | None = None
     #: None means unknown. Unknown is never treated as "reversible".
     reversible: bool | None = None
     #: Whether this action is permitted to cause effects outside the system.
@@ -48,6 +50,9 @@ class Policy:
     rules: Mapping[str, ActionRule]
     #: adapter name -> exact model id required. An alias here is refused at load.
     pinned_models: Mapping[str, str] = field(default_factory=dict)
+    #: The ONLY names whose evidence counts as trusted. Part of policy, so it is fingerprinted:
+    #: quietly adding a trusted source changes the fingerprint and invalidates open decisions.
+    trusted_sources: frozenset[str] = field(default_factory=frozenset)
     fingerprint: str = ""
 
     def rule_for(self, action: str) -> ActionRule | None:
@@ -100,6 +105,14 @@ def load(document: Mapping[str, Any]) -> Policy:
             from . import scope as scope_mod
 
             scope = tuple(scope_mod.normalize(scope_raw))
+        tools_raw = raw.get("tools")
+        tools: tuple[str, ...] | None = None
+        if tools_raw is not None:
+            if not isinstance(tools_raw, (list, tuple)) or not all(
+                isinstance(t, str) and t.strip() for t in tools_raw
+            ):
+                raise PolicyError(f"{where}: tools must be a list of non-empty tool names")
+            tools = tuple(dict.fromkeys(t.strip() for t in tools_raw))
         reversible = raw.get("reversible")
         if reversible is not None and not isinstance(reversible, bool):
             raise PolicyError(f"{where}: reversible must be true, false or absent (unknown)")
@@ -107,6 +120,7 @@ def load(document: Mapping[str, Any]) -> Policy:
             action=str(name),
             ceiling=_verdict(raw.get("ceiling", "ESCALATE"), where=where),
             scope=scope,
+            tools=tools,
             reversible=reversible,
             external_side_effects=bool(raw.get("external_side_effects", False)),
             requires_approval=bool(raw.get("requires_approval", False)),
@@ -124,9 +138,16 @@ def load(document: Mapping[str, Any]) -> Policy:
                 "A threshold or policy tied to an alias silently becomes a guess when it moves."
             )
 
+    raw_trusted = document.get("trusted_sources") or []
+    if not isinstance(raw_trusted, (list, tuple)) or not all(
+        isinstance(t, str) and t.strip() for t in raw_trusted
+    ):
+        raise PolicyError("trusted_sources must be a list of non-empty names")
+
     return Policy(
         rules=rules,
         pinned_models={str(k): str(v) for k, v in pinned.items()},
+        trusted_sources=frozenset(t.strip() for t in raw_trusted),
         fingerprint=fingerprint(document),
     )
 

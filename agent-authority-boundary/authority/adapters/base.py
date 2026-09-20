@@ -35,6 +35,7 @@ def advice_from(
     question: str = "",
     answer: str = "",
     confidence: float | None = None,
+    confidence_source: str = "",
     labelled: bool = False,
 ) -> Advice:
     """Build advice, clamping it to the advisory ceiling.
@@ -49,6 +50,7 @@ def advice_from(
         question=question,
         answer=answer,
         confidence=confidence,
+        confidence_source=confidence_source,
         labelled=labelled,
     )
 

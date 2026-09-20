@@ -118,8 +118,20 @@ class ThresholdChoice:
 
     @property
     def saving_per_1k(self) -> float:
-        """Money the fitted threshold saves over reading 0.90 off raw confidence."""
+        """Money the fitted threshold saves over a 0.90 cutoff on the CALIBRATED probability.
+
+        Note the baseline: `choose()` is handed calibrated probabilities, so this compares the
+        fitted cutoff against a reflex cutoff in the same calibrated space, and is near zero by
+        construction. The headline number a user cares about is `Profile.saving_per_1k`, which
+        compares against 0.90 on the RAW confidence -- what people actually ship. Both are
+        correct; only the second is a claim about money.
+        """
         return self.naive.cost_per_1k - self.best.cost_per_1k
+
+    #: Explicit alias. Same value, unambiguous name.
+    @property
+    def saving_vs_calibrated_090_per_1k(self) -> float:
+        return self.saving_per_1k
 
     def verdict(self) -> str:
         if not self.worth_automating:

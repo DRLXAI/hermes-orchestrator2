@@ -57,7 +57,7 @@ assert decision.executable
 
 # Optional, advisory only. This can lower the verdict; it can never raise it.
 advice = JevAdapter().advise(
-    JevResponse("jev-1.13", "is this edit safe?", True, {"true": 0.97, "false": 0.03}),
+    JevResponse("jev-1.13", "is this edit safe?", "noul", 0.97),
     min_confidence=0.8,
 )
 decision = decide(policy, ActionRequest("write_doc", ("docs/pricing.md",)), advice)
@@ -66,18 +66,36 @@ decision = decide(policy, ActionRequest("write_doc", ("docs/pricing.md",)), advi
 finding = verify_effect(decision, observed_resources=["docs/pricing.md"], policy=policy)
 ```
 
+## CLI
+
+```sh
+authority init policy.json                 # starter policy
+authority check policy.json                # validate; print fingerprint
+authority decide policy.json --action write_doc --resource docs/a.md --db ev.db
+authority review policy.json --db ev.db    # what is waiting for a human
+authority approve policy.json <id> --db ev.db --by david
+authority confirm policy.json <id> --db ev.db --by david      # ground truth, not agreement
+authority readiness policy.json --db ev.db --question "is this edit safe?" --max-error 0.05
+authority export policy.json --db ev.db --out labelled.jsonl  # for jevcal or the kit
+authority verify policy.json --db ev.db    # evidence chain intact?
+```
+
 ## Status
 
-Honest about what is built. The PROTECT layer, the adapter contract, the Jev adapter and the
-evidence/readiness layer are implemented and tested, including a 31-test adversarial suite. No
-performance or calibration claim is made anywhere in this package, because no measurement on
-real traffic has been done. See `docs/GAPS.md`.
+Honest about what is built. PROTECT, the adapter contract, the Jev adapter, persistent evidence,
+the review workflow, target-dependent readiness and the CLI are implemented and tested. **No
+performance or calibration claim is made anywhere in this package**, because nothing has been
+measured on real traffic. See `docs/GAPS.md` for what is missing and
+`docs/THREAT-MODEL.md` for what this does not defend.
 
 ## Tests
 
 ```sh
-python3 tests/test_adversarial.py    # attacks; must stay green
-python3 tests/test_onboarding.py     # runs the quickstart above verbatim
+./run_tests.sh          # all four suites
 ```
+
+66 tests: adversarial attacks, the Jev adapter against Jev's real response shape, persistence and
+trust, and the quickstart above executed verbatim. Five critical invariants are mutation-tested —
+inverting any one of them fails the suite.
 
 Zero dependencies, standard library only — deliberate for security-sensitive infrastructure.

@@ -75,18 +75,6 @@ def check(profile: Profile, serving_model: str, *, strict: bool = False) -> Drif
     return result
 
 
-def pinned(model: str) -> str:
-    """Warn when a model id is an alias rather than a pinned build.
-
-    Returns:
-        The same id, unchanged. This is a check, not a rewrite: silently
-        substituting a version would be its own kind of drift.
-    """
-    if model.endswith("-latest") or model.endswith("-preview") or model.count("-") < 2:
-        return model
-    return model
-
-
 def is_alias(model: str) -> bool:
     """Whether this id can move underneath you."""
     return model.endswith("-latest") or model.endswith("-preview")
